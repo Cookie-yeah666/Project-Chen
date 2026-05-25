@@ -189,7 +189,8 @@
   }
 
   function scheduleNextBlink(): void {
-    var interval = 3000 + Math.random() * 4000;
+    // 2~8秒随机间隔，大部分在3~5秒
+    var interval = 2000 + Math.random() * 3000 + Math.random() * 3000;
     blinkTimer = setTimeout(function () {
       if (currentState === 'idle') {
         performBlink();
@@ -201,6 +202,8 @@
   function performBlink(): void {
     if (!SPRITE_DIR) return;
     isBlinking = true;
+    // 80~150ms随机速度
+    var speed = 80 + Math.random() * 70;
     setSprite('idle_blink_1');
     setTimeout(function () {
       setSprite('idle_blink_2');
@@ -209,9 +212,9 @@
         setTimeout(function () {
           setSprite('idle');
           isBlinking = false;
-        }, 120);
-      }, 120);
-    }, 120);
+        }, speed);
+      }, speed);
+    }, speed);
   }
 
   init();
