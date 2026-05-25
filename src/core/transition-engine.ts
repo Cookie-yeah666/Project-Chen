@@ -22,6 +22,13 @@ export class TransitionEngine {
     this.stateManager = stateManager;
     this.timeAwareness = timeAwareness;
     this.config = stateManager.getConfig();
+
+    // 监听状态变化：离开 curious 时重置 isCursorNear
+    this.stateManager.onStateChange((event) => {
+      if (event.from === 'curious' && event.to !== 'curious') {
+        this.isCursorNear = false;
+      }
+    });
   }
 
   start(tickIntervalMs: number = 1000): void {

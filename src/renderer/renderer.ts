@@ -189,10 +189,16 @@
   }
 
   function scheduleNextBlink(): void {
-    // 2~8秒随机间隔，大部分在3~5秒
-    var interval = 2000 + Math.random() * 3000 + Math.random() * 3000;
+    var interval;
+    if (currentState === 'curious') {
+      // curious: 2~6秒，更快
+      interval = 2000 + Math.random() * 2000 + Math.random() * 2000;
+    } else {
+      // idle: 2~8秒
+      interval = 2000 + Math.random() * 3000 + Math.random() * 3000;
+    }
     blinkTimer = setTimeout(function () {
-      if (currentState === 'idle') {
+      if (currentState === 'idle' || currentState === 'curious') {
         performBlink();
       }
       scheduleNextBlink();
@@ -202,8 +208,14 @@
   function performBlink(): void {
     if (!SPRITE_DIR) return;
     isBlinking = true;
-    // 80~150ms随机速度
-    var speed = 80 + Math.random() * 70;
+    var speed: number;
+    if (currentState === 'curious') {
+      // curious: 70~130ms，更快
+      speed = 70 + Math.random() * 60;
+    } else {
+      // idle: 80~150ms
+      speed = 80 + Math.random() * 70;
+    }
     setSprite('idle_blink_1');
     setTimeout(function () {
       setSprite('idle_blink_2');

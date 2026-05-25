@@ -1,5 +1,9 @@
 # Quiet Companion - 版本记录
 
+## v0.1.1 (2026-05-24)
+- curious状态眨眼集成：频率2~6秒，速度70~130ms
+- 修复curious只能触发一次的bug（离开curious时重置isCursorNear）
+
 ## v0.1.0 (2026-05-23)
 - 初始版本
 - 7状态系统（idle/curious/dragged/sleepy/sleeping/lonely/comfortable）
