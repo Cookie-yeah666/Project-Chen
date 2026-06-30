@@ -1,7 +1,7 @@
 {
-  "name": "quiet-companion",
-  "version": "0.2.1",
-  "description": "安静的伙伴 - 桌面数字伙伴",
+  "name": "project-ze",
+  "version": "0.2.11",
+  "description": "An open-source desktop AI companion powered by LLM / 一个基于大语言模型的桌面 AI 伙伴",
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc",
@@ -20,8 +20,8 @@
   "license": "ISC",
   "type": "commonjs",
   "build": {
-    "appId": "com.quiet-companion.app",
-    "productName": "Quiet Companion",
+    "appId": "com.project-ze.app",
+    "productName": "Project-Ze",
     "directories": {
       "output": "release"
     },

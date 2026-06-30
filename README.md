@@ -1,71 +1,125 @@
-# Quiet Companion
+<p align="center">
+  <img src="src/assets/sprites/basic/idle/idle.png" width="120" alt="Project-Ze Logo" />
+</p>
 
-一个安静的桌面数字伙伴。她会待在你的桌面角落，偶尔好奇地看看你，在你孤单时陪你说说话。
+<h1 align="center">Project-Ze</h1>
 
-> **注意**：这不是一个纯粹的 AI 项目。核心是状态系统、动画引擎和交互逻辑。AI 对话是可选的附加功能。
+<p align="center">
+  <strong>An open-source desktop AI companion powered by LLM</strong>
+  <br />
+  一个基于大语言模型的桌面 AI 伙伴
+</p>
 
-## 功能
+<p align="center">
+  <img src="https://img.shields.io/badge/Electron-42.2-blue" alt="Electron" />
+  <img src="https://img.shields.io/badge/TypeScript-6.0-brightgreen" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
+</p>
 
-- **8 种状态**：idle、curious、dragged、sleepy、sleeping、lonely、comfortable、tried
-- **差分图系统**：每种状态有对应的精灵图和动画
-- **AI 对话**：支持 OpenAI 兼容 API（可选，需配置 API Key）
-- **语音合成**：支持 GPT-SoVITS、MiMo TTS、阿里云 TTS、OpenAI TTS
-- **屏幕分析**：Vision API 截屏分析（可选）
-- **情绪系统**：角色拥有动态情绪权重
-- **记忆系统**：记住用户偏好，自动生成对话摘要
-- **好感度/熟悉度**：与角色的关系会随时间变化
-- **活动监视**：感知用户当前在用什么应用（仅本地，不上传）
+---
 
-## 快速开始
+## Vision
 
-### 下载运行（推荐）
+```
+Desktop Companion → AI Companion → Embodied Agent → Physical Robot
+```
 
-从 Release 页面下载最新版，解压后双击 `Quiet Companion.exe` 即可运行。
+从桌面开始，逐步走向具身智能。
 
-### 从源码构建
+## Features
+
+| 功能 | 说明 | 状态 |
+|------|------|------|
+| 8 State Animation | 空闲/好奇/拖拽/犯困/睡觉/孤独/舒适/疲惫 | ✔ |
+| Emotion System | 动态情绪权重 0~100 | ✔ |
+| AI Chat (LLM) | OpenAI 兼容 API | ✔ |
+| Memory System | 对话摘要 + 长期记忆 | ✔ |
+| TTS Voice | GPT-SoVITS / MiMo / 阿里云 / OpenAI | ✔ |
+| Screen Analysis | Vision API 截屏分析 | ✔ |
+| Relationship | 好感度 + 熟悉度系统 | ✔ |
+| Activity Monitor | 窗口标题感知 | ✔ |
+| Debug Window | F3 调试面板 | ✔ |
+
+## Quick Start
 
 ```bash
+git clone https://github.com/enz233/Project-Ze.git
+cd Project-Ze
 npm install
-npm run build
 npm start
 ```
 
-### 配置 AI（可选）
+### Configure AI (Optional)
 
-1. 按 F11 打开设置
-2. 填写 API Key 和模型
-3. 点击测试连接
+F11 → 设置 → 填写 API Key → 测试连接
 
-支持 DeepSeek、OpenAI、硅基流动、Moonshot、智谱、通义千问等。
+支持 DeepSeek、OpenAI、硅基流动、Moonshot、智谱、通义千问。
 
-## 操作说明
+## Usage
 
 | 操作 | 效果 |
 |------|------|
 | 鼠标靠近 | 好奇 |
-| 左键拖拽 | 拖拽移动 |
-| 右键 | 打开聊天输入框 |
+| 左键拖拽 | 移动 |
+| 右键 | 聊天输入 |
+| F3 | 调试窗口 |
 | F11 | 设置 |
 | F12 | 开发者工具 |
+| `.` 开头消息 | 截屏分析 |
 
-## 技术栈
-
-- Electron
-- TypeScript
-- 原生 HTML/CSS/JS（无框架）
-- fetch 调用 AI API（主进程）
-
-## 项目结构
+## Architecture
 
 ```
-src/
-├── core/        核心逻辑（状态、AI、TTS、情绪、记忆）
-├── main/        Electron 主进程
-├── renderer/    渲染进程（精灵图、动画、气泡）
-├── config/      配置文件（不包含 API Key）
-└── assets/      资源文件
+Renderer (Sprites + Animation + Bubble)
+    ↕ IPC
+Main Process
+    ├─ StateManager       状态管理
+    ├─ TransitionEngine   转移引擎
+    ├─ EmotionSystem      情绪权重
+    ├─ AIMemory           记忆
+    ├─ ChatManager        对话
+    └─ TTSManager         语音
 ```
 
-## 许可
+## Roadmap
 
-ISC
+**v0.1** — Foundation
+- [x] Window & Skeleton
+- [x] 8 State Animation
+- [x] Drag & Interaction
+
+**v0.2** — Intelligence *(current)*
+- [x] AI Chat
+- [x] TTS Voice
+- [x] Emotion System
+- [x] Memory & Summary
+- [x] Screen Analysis
+- [x] Relationship System
+
+**v0.3** — Interactive
+- [ ] Long-term Memory (RAG)
+- [ ] Voice Input (ASR)
+- [ ] Custom Sprites
+- [ ] Plugins
+
+**Future**
+- [ ] Mobile Companion
+- [ ] Robot Platform
+
+## Project Structure
+
+```
+Project-Ze/
+├── src/
+│   ├── core/          核心逻辑
+│   ├── main/          Electron 主进程
+│   ├── renderer/      渲染进程
+│   ├── config/        配置
+│   └── assets/        资源
+├── README.md
+└── package.json
+```
+
+## License
+
+MIT
