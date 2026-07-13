@@ -1,6 +1,6 @@
 # Quiet Companion 项目索引
 
-> 本文档供 AI 助手快速了解项目结构，避免每次读全部代码。最后更新：v0.2.12
+> 本文档供 AI 助手快速了解项目结构，避免每次读全部代码。最后更新：v0.2.13
 
 ## 项目概述
 
@@ -24,6 +24,7 @@ src/
 ├── main/               # Electron 主进程
 │   ├── main.ts             # 入口（窗口、IPC、模块初始化）
 │   ├── preload.ts          # 预加载脚本（IPC 桥接）
+│   ├── debug.html          # 调试窗口（日志 + 关系/记忆快照）
 │   └── settings.html       # 设置窗口（纯 HTML/CSS/JS）
 ├── renderer/           # 渲染进程
 │   ├── renderer.ts         # 主逻辑（IIFE 模式，无模块语法）
@@ -75,6 +76,7 @@ src/
 - **拖拽**：主进程用 `screen.getCursorScreenPoint()` 轮询鼠标位置
 - **AI 模块**：AIConfigManager → AIService → ChatManager
 - **设置窗口**：单例模式，F11 打开
+- **调试窗口**：F3 打开，显示日志、关系数值、互动统计、常用应用和生活习惯提示词
 
 ### AI 系统
 - **配置**：`ai-config.json` 持久化到 `app.getPath('userData')/config/`
@@ -150,3 +152,4 @@ src/
 | v0.2.1 | 2026-05-30 | AI 记忆+情感前缀+气泡独立 |
 | v0.2.2 | 2026-06-03 | macOS 兼容+打包配置 |
 | v0.2.12 | 2026-07-13 | 轻量互动记忆、活动气泡冷却、前台窗口检测修复、动画卡住兜底 |
+| v0.2.13 | 2026-07-13 | Debug 面板显示关系、互动统计、常用应用和生活习惯 |

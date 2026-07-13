@@ -39,6 +39,39 @@
     .toolbar .spacer { flex: 1; }
     .toolbar .count { color: #888; font-size: 11px; }
 
+    /* 记忆状态 */
+    .memory-panel {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      padding: 8px 12px;
+      background: #202020;
+      border-bottom: 1px solid #3c3c3c;
+      flex-shrink: 0;
+    }
+    .memory-card {
+      min-height: 58px;
+      padding: 7px 8px;
+      border: 1px solid #3a3a3a;
+      border-radius: 5px;
+      background: #252526;
+      overflow: hidden;
+    }
+    .memory-title {
+      margin-bottom: 4px;
+      color: #9cdcfe;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .memory-value {
+      color: #d4d4d4;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .memory-muted { color: #777; }
+
     /* 分类筛选 */
     .filters {
       display: flex;
@@ -113,8 +146,27 @@
   <div class="toolbar">
     <button id="clearBtn">Clear</button>
     <button id="pauseBtn">Pause</button>
+    <button id="refreshMemoryBtn">Refresh Memory</button>
     <div class="spacer"></div>
     <span class="count" id="countDisplay">0 logs</span>
+  </div>
+  <div class="memory-panel">
+    <div class="memory-card">
+      <div class="memory-title">Relationship</div>
+      <div class="memory-value" id="relationshipView">Loading...</div>
+    </div>
+    <div class="memory-card">
+      <div class="memory-title">Interactions</div>
+      <div class="memory-value" id="interactionView">Loading...</div>
+    </div>
+    <div class="memory-card">
+      <div class="memory-title">Top Apps</div>
+      <div class="memory-value" id="appsView">Loading...</div>
+    </div>
+    <div class="memory-card">
+      <div class="memory-title">Life Pattern</div>
+      <div class="memory-value" id="lifePatternView">Loading...</div>
+    </div>
   </div>
   <div class="filters">
     <button class="filter-btn active" data-cat="all">All</button>
@@ -133,6 +185,11 @@
     var countDisplay = document.getElementById('countDisplay');
     var pauseBtn = document.getElementById('pauseBtn');
     var clearBtn = document.getElementById('clearBtn');
+    var refreshMemoryBtn = document.getElementById('refreshMemoryBtn');
+    var relationshipView = document.getElementById('relationshipView');
+    var interactionView = document.getElementById('interactionView');
+    var appsView = document.getElementById('appsView');
+    var lifePatternView = document.getElementById('lifePatternView');
     var paused = false;
     var logCount = 0;
     var activeFilters = new Set(['state', 'drag', 'tts', 'observer', 'chat', 'ai', 'error']);
@@ -181,6 +238,59 @@
       logCount = 0;
       countDisplay.textContent = '0 logs';
     });
+
+    if (refreshMemoryBtn) {
+      refreshMemoryBtn.addEventListener('click', refreshMemoryPanel);
+    }
+
+    function fmtNum(value) {
+      return Math.round(Number(value || 0));
+    }
+
+    function formatInteractionStats(stats) {
+      if (!stats || Object.keys(stats).length === 0) return 'No interactions yet';
+      return Object.keys(stats)
+        .sort(function(a, b) { return (stats[b].count || 0) - (stats[a].count || 0); })
+        .slice(0, 5)
+        .map(function(key) { return key + ': ' + (stats[key].count || 0); })
+        .join('\n');
+    }
+
+    function formatTopApps(appUsage) {
+      if (!appUsage || Object.keys(appUsage).length === 0) return 'No app usage yet';
+      return Object.keys(appUsage)
+        .sort(function(a, b) { return (appUsage[b].count || 0) - (appUsage[a].count || 0); })
+        .slice(0, 5)
+        .map(function(name) { return name + ': ' + (appUsage[name].count || 0); })
+        .join('\n');
+    }
+
+    function refreshMemoryPanel() {
+      // @ts-ignore
+      if (!window.companion || !window.companion.getChatInfo) return;
+      // @ts-ignore
+      window.companion.getChatInfo().then(function(info) {
+        var memory = info && info.memory ? info.memory : {};
+        relationshipView.textContent = [
+          'affection: ' + fmtNum(memory.affection) + '/100',
+          'familiarity: ' + fmtNum(memory.familiarity) + '/100',
+          'today: ' + fmtNum(memory.todayInteractions),
+          'history: ' + fmtNum(info.historyCount)
+        ].join('\n');
+        interactionView.textContent = formatInteractionStats(memory.interactionStats);
+        appsView.textContent = formatTopApps(memory.appUsage);
+        lifePatternView.textContent = info.lifePattern || info.summary || 'No memory summary yet';
+      }).catch(function(error) {
+        var msg = 'Memory load failed: ' + (error && error.message ? error.message : String(error));
+        relationshipView.textContent = msg;
+        interactionView.textContent = msg;
+        appsView.textContent = msg;
+        lifePatternView.textContent = msg;
+      });
+    }
+
+    refreshMemoryPanel();
+    setInterval(refreshMemoryPanel, 10000);
 
     // 检查是否在底部附近（50px 以内）
     function isNearBottom() {

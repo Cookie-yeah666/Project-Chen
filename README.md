@@ -38,7 +38,7 @@ Desktop Companion → AI Companion → Embodied Agent → Physical Robot
 | Screen Analysis | Vision API 截屏分析 | ✔ |
 | Relationship | 好感度 + 熟悉度系统 | ✔ |
 | Activity Monitor | 窗口标题感知 | ✔ |
-| Debug Window | F3 调试面板 | ✔ |
+| Debug Window | F3 调试面板，含日志/关系/记忆快照 | ✔ |
 
 ## Quick Start
 
@@ -62,7 +62,7 @@ F11 → 设置 → 填写 API Key → 测试连接
 | 鼠标靠近 | 好奇 |
 | 左键拖拽 | 移动 |
 | 右键 | 聊天输入 |
-| F3 | 调试窗口 |
+| F3 | 调试窗口（日志/关系/记忆） |
 | F11 | 设置 |
 | F12 | 开发者工具 |
 | `.` 开头消息 | 截屏分析 |
