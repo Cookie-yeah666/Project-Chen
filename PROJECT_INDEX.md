@@ -57,6 +57,7 @@ src/
 - `proactive-reaction-system.ts`：主动回应候选判断与冷却记录。
 - `micro-behavior-manager.ts`：主动候选触发的微行为执行。
 - `bubble-manager.ts`：气泡发送、状态门禁、主动气泡短间隔控制。
+- `bubble-orchestrator.ts`：主进程气泡编排边界，接收带来源/优先级的气泡请求，并把实际投递委托给 `BubbleManager`。
 - `screen-analyzer.ts`：唯一屏幕截图与 Vision 分析服务。
 - `emotion-system.ts` / `emotion-updater.ts`：情绪状态与更新。
 - `tts-manager.ts` / `tts-engine.ts` / `tts-*.ts`：TTS 编排、统一引擎接口与各供应商合成实现；`TTSManager` 负责播放/字幕/停止/`playbackId`，供应商文件只负责语音合成。
@@ -93,7 +94,7 @@ src/
 - **AI 模块**：AIConfigManager → AIService → ChatManager
 - **设置窗口**：单例模式，F11 打开
 - **调试窗口**：F3 打开，显示日志、关系数值、互动统计、常用应用和生活习惯提示词
-- **主动回应**：当前主动回应主路径：`ObserverManager → ContextCollector → ProactiveReactionSystem → MicroBehaviorManager → BubbleManager.tryShowProactiveBubble`。基于轻量上下文快照、应用切换、工作/休息转换、长专注和直接互动生成轻柔回应；规则来自 `src/config/proactive-reactions.json` 与 `src/config/micro-behaviors.json`，Debug 面板显示最近决策/拦截原因/预算状态
+- **主动回应**：当前主动回应主路径：`ObserverManager → ContextCollector → ProactiveReactionSystem → MicroBehaviorManager → BubbleOrchestrator → BubbleManager.tryShowProactiveBubble`。基于轻量上下文快照、应用切换、工作/休息转换、长专注和直接互动生成轻柔回应；规则来自 `src/config/proactive-reactions.json` 与 `src/config/micro-behaviors.json`，Debug 面板显示最近决策/拦截原因/预算状态。`BubbleOrchestrator` 只负责主进程气泡请求的轻量编排；`BubbleManager` 继续负责状态门禁、冷却和 `show-bubble` IPC 投递。
 
 ### AI 系统
 - **配置**：`ai-config.json` 持久化到 `app.getPath('userData')/config/`
