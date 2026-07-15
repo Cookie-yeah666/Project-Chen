@@ -3,6 +3,7 @@
 > 旧名 Quiet Companion；当前对外项目名为 Project-Ze。
 
 ## Unreleased
+- 屏幕目标指示系统：规划并实现 `.` 显式屏幕分析中的目标定位与指向流程，普通聊天自然语言自动触发暂缓
 - Renderer 动画守卫修复：为 blink、sleepy、lonely、bubble/subtitle timeout 链加入 handle 清理与 generation 检查，避免 stale callback 覆盖新状态或 guard flag 卡住
 
 ## v0.2.17 (2026-07-15)
