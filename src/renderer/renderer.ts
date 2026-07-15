@@ -889,10 +889,7 @@
 
     if (isDragVisualActive) return;
 
-    var pose = payload.pose || 'point-right';
-    if (pose !== 'point-left' && pose !== 'point-right' && pose !== 'point-up' && pose !== 'point-down') {
-      pose = 'point-right';
-    }
+    var pose = normalizePointPose(payload.pose);
 
     isPointVisualActive = true;
     companionEl.className = 'dragged';
@@ -903,10 +900,22 @@
     }
   }
 
+  function normalizePointPose(pose: any): string {
+    if (pose === 'point-right') return 'point-right';
+    if (pose === 'point-right_down') return 'point-right_down';
+    if (pose === 'point-down') return 'point-down';
+    if (pose === 'point-left_down') return 'point-left_down';
+    if (pose === 'point-left') return 'point-left';
+    if (pose === 'point-left_up') return 'point-left_up';
+    if (pose === 'point-up') return 'point-up';
+    if (pose === 'point-right_up') return 'point-right_up';
+    return 'point-right';
+  }
+
   function fallbackSpriteForPose(pose: string): string {
-    if (pose === 'point-left') return 'dragged_left';
-    if (pose === 'point-up') return 'dragged_up';
-    if (pose === 'point-down') return 'dragged_down';
+    if (pose === 'point-left' || pose === 'point-left_up' || pose === 'point-left_down') return 'dragged_left';
+    if (pose === 'point-up' || pose === 'point-right_up') return 'dragged_up';
+    if (pose === 'point-down' || pose === 'point-right_down') return 'dragged_down';
     return 'dragged_right';
   }
 
@@ -975,11 +984,15 @@
     else if (name.indexOf('sleepy') === 0) folder = 'basic/sleepy';
     else if (name.indexOf('sleep') === 0) folder = 'basic/sleeping';
     else if (name.indexOf('dragged') === 0) folder = 'basic/dragged';
-    else if (name.indexOf('point') === 0) folder = 'basic/point';
+    else if (name.indexOf('point') === 0) folder = 'point';
     else if (name.indexOf('lonely') === 0) folder = 'basic/lonely';
     else if (name.indexOf('comfortable') === 0) folder = 'basic/comfortable';
     else if (name.indexOf('tried') === 0) folder = 'basic/tried';
-    var path = SPRITE_DIR + folder + '/' + name + '.png';
+    var assetName = name;
+    if (name.indexOf('point-') === 0) {
+      assetName = name.slice('point-'.length);
+    }
+    var path = SPRITE_DIR + folder + '/' + assetName + '.png';
     console.log('[Sprite]', name);
     spriteEl.onerror = fallback ? function () {
       spriteEl.onerror = null;

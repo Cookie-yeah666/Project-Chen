@@ -4,7 +4,15 @@ import { MoveController } from './move-controller';
 import { ScreenAnalyzer, ScreenTargetLocateResult } from './screen-analyzer';
 import { WindowActivityService } from './window-activity-service';
 
-export type PointerPose = 'point-right' | 'point-left' | 'point-up' | 'point-down';
+export type PointerPose =
+  | 'point-right'
+  | 'point-right_down'
+  | 'point-down'
+  | 'point-left_down'
+  | 'point-left'
+  | 'point-left_up'
+  | 'point-up'
+  | 'point-right_up';
 export type ScreenPointingSessionState = 'capturing' | 'locating' | 'moving' | 'pointing' | 'cancelled' | 'done';
 export type ScreenTargetPointerCancelReason = 'new-request' | 'screen-changed' | 'drag-start' | 'manual';
 
@@ -53,13 +61,17 @@ const POINTER_KEYWORDS = [
 ];
 
 const CONFIDENCE_THRESHOLD = 0.72;
-const POINT_HOLD_MS = 5000;
+const POINT_HOLD_MS = 7000;
 const MOVE_SCREEN_MONITOR_MS = 150;
 const DEFAULT_POSES: Record<PointerPose, PointerPoseConfig> = {
   'point-right': { pose: 'point-right', pointerOffset: { x: 220, y: 135 } },
-  'point-left': { pose: 'point-left', pointerOffset: { x: 30, y: 135 } },
-  'point-up': { pose: 'point-up', pointerOffset: { x: 125, y: 35 } },
+  'point-right_down': { pose: 'point-right_down', pointerOffset: { x: 210, y: 210 } },
   'point-down': { pose: 'point-down', pointerOffset: { x: 125, y: 235 } },
+  'point-left_down': { pose: 'point-left_down', pointerOffset: { x: 40, y: 210 } },
+  'point-left': { pose: 'point-left', pointerOffset: { x: 30, y: 135 } },
+  'point-left_up': { pose: 'point-left_up', pointerOffset: { x: 40, y: 60 } },
+  'point-up': { pose: 'point-up', pointerOffset: { x: 125, y: 35 } },
+  'point-right_up': { pose: 'point-right_up', pointerOffset: { x: 210, y: 60 } },
 };
 
 export class ScreenTargetPointer {
@@ -259,20 +271,34 @@ export class ScreenTargetPointer {
     const windowCenterY = bounds.y + bounds.height / 2;
     const dx = screenPoint.x - windowCenterX;
     const dy = screenPoint.y - windowCenterY;
-
-    const pose = Math.abs(dx) >= Math.abs(dy)
-      ? (dx >= 0 ? DEFAULT_POSES['point-right'] : DEFAULT_POSES['point-left'])
-      : (dy >= 0 ? DEFAULT_POSES['point-down'] : DEFAULT_POSES['point-up']);
+    const poseKey = this.poseFromDelta(dx, dy);
+    const pose = DEFAULT_POSES[poseKey];
 
     console.log('[ScreenTargetPointer][debug] choose pose:', {
       screenPoint,
       windowBounds: bounds,
       windowCenter: { x: windowCenterX, y: windowCenterY },
       delta: { x: dx, y: dy },
+      angleDegrees: Number.isFinite(dx) && Number.isFinite(dy) ? Math.atan2(dy, dx) * 180 / Math.PI : null,
       pose,
     });
 
     return pose;
+  }
+
+  private poseFromDelta(dx: number, dy: number): PointerPose {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return 'point-right';
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return 'point-right';
+
+    const normalizedDegrees = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    if (normalizedDegrees < 22.5 || normalizedDegrees >= 337.5) return 'point-right';
+    if (normalizedDegrees < 67.5) return 'point-right_down';
+    if (normalizedDegrees < 112.5) return 'point-down';
+    if (normalizedDegrees < 157.5) return 'point-left_down';
+    if (normalizedDegrees < 202.5) return 'point-left';
+    if (normalizedDegrees < 247.5) return 'point-left_up';
+    if (normalizedDegrees < 292.5) return 'point-up';
+    return 'point-right_up';
   }
 
   private hasScreenChanged(beforeTitle: string, afterTitle: string): boolean {
