@@ -35,7 +35,7 @@ export class JsonConfigStore<T extends object> {
   }
 
   update(partial: Partial<T>): void {
-    this.value = { ...this.value, ...partial };
+    this.value = this.normalize({ ...this.value, ...partial });
     this.save();
   }
 

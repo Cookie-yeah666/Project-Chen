@@ -81,8 +81,29 @@ export const ASR_PROVIDER_PRESETS: Record<ASRProviderPreset, ASRProviderPresetDe
 
 const DEFAULT_ASR_PROVIDER_PRESET: ASRProviderPreset = 'openai';
 
+function isASRProvider(value: unknown): value is ASRProvider {
+  return value === 'openai-compatible';
+}
+
+function isASRStreamingMode(value: unknown): value is ASRStreamingMode {
+  return value === 'realtime' || value === 'chunked-fallback';
+}
+
+function normalizeString(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function normalizePositiveNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 function isASRProviderPreset(value: unknown): value is ASRProviderPreset {
-  return typeof value === 'string' && value in ASR_PROVIDER_PRESETS;
+  return typeof value === 'string'
+    && Object.prototype.hasOwnProperty.call(ASR_PROVIDER_PRESETS, value);
 }
 
 function matchesPresetManagedFields(config: ASRConfig, preset: ASRProviderPreset): boolean {
@@ -103,8 +124,37 @@ export function inferASRProviderPreset(config: ASRConfig): ASRProviderPreset {
 }
 
 export function normalizeASRConfigForLoad(config: Partial<ASRConfig>): ASRConfig {
-  const normalized: ASRConfig = { ...DEFAULT_ASR_CONFIG, ...config };
+  const raw = config as Record<string, unknown>;
+  const defaultCache = DEFAULT_ASR_CONFIG.cache;
+  const rawCache = raw.cache && typeof raw.cache === 'object'
+    ? raw.cache as Partial<ASRCacheConfig>
+    : {};
+
+  const normalized: ASRConfig = {
+    ...DEFAULT_ASR_CONFIG,
+    ...config,
+    enabled: normalizeBoolean(raw.enabled, DEFAULT_ASR_CONFIG.enabled),
+    provider: isASRProvider(raw.provider) ? raw.provider : DEFAULT_ASR_CONFIG.provider,
+    baseUrl: normalizeString(raw.baseUrl, DEFAULT_ASR_CONFIG.baseUrl),
+    apiKey: normalizeString(raw.apiKey, DEFAULT_ASR_CONFIG.apiKey),
+    model: normalizeString(raw.model, DEFAULT_ASR_CONFIG.model),
+    realtimePath: normalizeString(raw.realtimePath, DEFAULT_ASR_CONFIG.realtimePath),
+    transcriptionPath: normalizeString(raw.transcriptionPath, DEFAULT_ASR_CONFIG.transcriptionPath),
+    streamingMode: isASRStreamingMode(raw.streamingMode) ? raw.streamingMode : DEFAULT_ASR_CONFIG.streamingMode,
+    language: normalizeString(raw.language, DEFAULT_ASR_CONFIG.language),
+    autoSendFinalTranscript: normalizeBoolean(raw.autoSendFinalTranscript, DEFAULT_ASR_CONFIG.autoSendFinalTranscript),
+    holdToTalkShortcut: normalizeString(raw.holdToTalkShortcut, DEFAULT_ASR_CONFIG.holdToTalkShortcut),
+    cache: {
+      ...defaultCache,
+      ...rawCache,
+      enabled: normalizeBoolean(rawCache.enabled, defaultCache.enabled),
+      retentionMinutes: normalizePositiveNumber(rawCache.retentionMinutes, defaultCache.retentionMinutes),
+      maxSessionBytes: normalizePositiveNumber(rawCache.maxSessionBytes, defaultCache.maxSessionBytes),
+    },
+  };
+
   normalized.providerPreset = isASRProviderPreset(config.providerPreset)
+    && (config.providerPreset === 'custom-openai-compatible' || matchesPresetManagedFields(normalized, config.providerPreset))
     ? config.providerPreset
     : inferASRProviderPreset(normalized);
   return normalized;
