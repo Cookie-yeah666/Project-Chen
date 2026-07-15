@@ -84,6 +84,8 @@ interface CameraFrameInput {
 
 设置页只负责在用户授权后通过 `navigator.mediaDevices.getUserMedia` 抓取 320px 宽的低分辨率 JPEG 单帧；core 层不直接打开摄像头。`detectOnce` 用于“立即检测一次”，不触发气泡；`processBackgroundFrame` 用于可选后台低频检测，会进入状态机并在稳定 `absent -> present` 时尝试回来回应。
 
+设置页还提供实时预览窗口：点击“开启预览”后保持一条本地 camera stream 绑定到设置页 `<video>`，用于直观看到当前画面；点击“关闭预览”或关闭设置页会停止 tracks。检测按钮会优先复用这条预览 stream 截取单帧，未开启预览时才短暂打开摄像头并在取帧后立即关闭。实时预览只在本地渲染，不进入 IPC，也不会保存到磁盘。
+
 ## 验证
 
 ```bash

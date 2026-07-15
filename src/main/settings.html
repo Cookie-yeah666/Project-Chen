@@ -816,19 +816,50 @@
       return 'presence=' + result.presence + ', confidence=' + Math.round((result.confidence || 0) * 100) + '%, affect=' + result.affect + ', reason=' + result.reason;
     }
 
-    async function captureCameraFrame(source) {
+    let cameraPreviewStream = null;
+
+    async function openCameraStream() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('当前环境不支持摄像头访问');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 320 }, height: { ideal: 180 }, frameRate: { ideal: 1, max: 5 } },
+      return await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15, max: 30 } },
         audio: false,
       });
+    }
+
+    async function startCameraPreview() {
+      if (cameraPreviewStream) return cameraPreviewStream;
+      cameraPreviewStream = await openCameraStream();
+      const video = document.getElementById('cameraLivePreview');
+      video.srcObject = cameraPreviewStream;
+      video.style.display = 'block';
+      await video.play();
+      document.getElementById('cameraLivePreviewHint').textContent = '预览已开启，仅在设置页实时显示，不保存到磁盘。';
+      return cameraPreviewStream;
+    }
+
+    function stopCameraPreview() {
+      if (cameraPreviewStream) {
+        cameraPreviewStream.getTracks().forEach(function(track) { track.stop(); });
+        cameraPreviewStream = null;
+      }
+      const video = document.getElementById('cameraLivePreview');
+      video.pause();
+      video.srcObject = null;
+      video.style.display = 'none';
+      document.getElementById('cameraLivePreviewHint').textContent = '预览未开启';
+    }
+
+    async function captureCameraFrame(source) {
+      const stream = cameraPreviewStream || await openCameraStream();
       try {
-        const video = document.createElement('video');
-        video.muted = true;
-        video.srcObject = stream;
-        await video.play();
+        const video = cameraPreviewStream ? document.getElementById('cameraLivePreview') : document.createElement('video');
+        if (!cameraPreviewStream) {
+          video.muted = true;
+          video.srcObject = stream;
+          await video.play();
+        }
         await new Promise(function(resolve) { setTimeout(resolve, 250); });
         const canvas = document.createElement('canvas');
         canvas.width = 320;
@@ -850,7 +881,9 @@
           source: source,
         };
       } finally {
-        stream.getTracks().forEach(function(track) { track.stop(); });
+        if (!cameraPreviewStream) {
+          stream.getTracks().forEach(function(track) { track.stop(); });
+        }
       }
     }
 
@@ -1206,6 +1239,28 @@
       await window.companion.cameraAwareness.updateConfig(config);
       showToast('摄像头感知设置已保存', 'success');
     });
+
+    document.getElementById('startCameraPreviewBtn').addEventListener('click', async function() {
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = '开启中...';
+      try {
+        await startCameraPreview();
+        showToast('摄像头预览已开启', 'success');
+      } catch (e) {
+        showToast('摄像头预览失败: ' + (e.message || e), 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '开启预览';
+      }
+    });
+
+    document.getElementById('stopCameraPreviewBtn').addEventListener('click', function() {
+      stopCameraPreview();
+      showToast('摄像头预览已关闭', 'success');
+    });
+
+    window.addEventListener('beforeunload', stopCameraPreview);
 
     document.getElementById('testCameraAwarenessBtn').addEventListener('click', async function() {
       var btn = this;
