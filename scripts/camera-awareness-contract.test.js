@@ -189,7 +189,12 @@ function testCameraSettingsIntegrationHooks() {
   assert(settingsHtml.includes('id="cameraAwarenessEnabled"'));
   assert(settingsHtml.includes('id="cameraBackgroundEnabled"'));
   assert(settingsHtml.includes('id="testCameraAwarenessBtn"'));
+  assert(settingsHtml.includes('id="cameraLivePreview"'));
+  assert(settingsHtml.includes('id="startCameraPreviewBtn"'));
+  assert(settingsHtml.includes('id="stopCameraPreviewBtn"'));
   assert(settingsHtml.includes('function captureCameraFrame(source)'));
+  assert(settingsHtml.includes('function startCameraPreview()'));
+  assert(settingsHtml.includes('function stopCameraPreview()'));
   assert(settingsHtml.includes('navigator.mediaDevices.getUserMedia'));
   assert(settingsHtml.includes('source: source'));
   assert(settingsHtml.includes('window.companion.cameraAwareness.detectOnce(frame)'));

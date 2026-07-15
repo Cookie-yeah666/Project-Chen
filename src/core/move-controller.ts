@@ -246,11 +246,13 @@ export class MoveController {
   private clampToWorkArea(x: number, y: number, width: number, height: number): { x: number; y: number } {
     const display = screen.getDisplayNearestPoint({ x: Math.round(x), y: Math.round(y) });
     const workArea = display.workArea;
-    const maxX = Math.max(workArea.x, workArea.x + workArea.width - width);
-    const maxY = Math.max(workArea.y, workArea.y + workArea.height - height);
+    const minX = workArea.x;
+    const minY = workArea.y;
+    const maxX = Math.max(minX, workArea.x + workArea.width - width);
+    const maxY = Math.max(minY, workArea.y + workArea.height - height);
     return {
-      x: Math.round(this.clamp(x, workArea.x, maxX)),
-      y: Math.round(this.clamp(y, workArea.y, maxY)),
+      x: Math.round(Math.min(maxX, Math.max(minX, x))),
+      y: Math.round(Math.min(maxY, Math.max(minY, y))),
     };
   }
 
