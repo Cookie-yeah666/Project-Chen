@@ -64,10 +64,17 @@ function testVoiceAudioCachePaths() {
   );
 }
 
+function testVoiceInputManagerExports() {
+  const managerModule = load('core/voice-input-manager.js');
+  assert.strictEqual(typeof managerModule.createVoiceSessionId, 'function');
+  assert.match(managerModule.createVoiceSessionId(), /^voice-\d+-[a-z0-9]+$/);
+}
+
 function run() {
   testAsrConfigDefaults();
   testAsrEngineFactoryAndParser();
   testVoiceAudioCachePaths();
+  testVoiceInputManagerExports();
   console.log('voice-input-contract tests passed');
 }
 
