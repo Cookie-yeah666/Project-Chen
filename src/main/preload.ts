@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('companion', {
     ipcRenderer.send('user-message', text);
   },
   guide: {
+    start: (softwareName: string): Promise<any> => ipcRenderer.invoke('guide-start', softwareName),
     next: (): Promise<any> => ipcRenderer.invoke('guide-next'),
     exit: (): Promise<any> => ipcRenderer.invoke('guide-exit'),
     onState: (callback: (payload: any) => void) => {

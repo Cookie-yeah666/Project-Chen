@@ -294,6 +294,17 @@
       </div>
 
       <div class="field">
+        <label>本次要安装的软件</label>
+        <input type="text" id="operationGuideTargetSoftware" placeholder="例如 Claude客户端、VSCode、Git" />
+        <div class="hint">输入目标后点击开始，桌宠会自动整理步骤并逐步移动指向当前要操作的位置。</div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="startOperationGuideBtn">开始分步指引</button>
+        <button class="btn btn-secondary" id="exitOperationGuideBtn">退出当前指引</button>
+      </div>
+
+      <div class="field">
         <label>快速选择</label>
         <select id="operationGuidePreset">
           <option value="">自定义</option>
@@ -805,6 +816,7 @@
       document.getElementById('operationGuideApiKey').value = config.apiKey || '';
       document.getElementById('operationGuideBaseURL').value = config.baseURL || 'https://api.openai.com/v1';
       document.getElementById('operationGuideModel').value = config.model || 'gpt-4o-mini';
+      document.getElementById('operationGuideTargetSoftware').value = config.lastTargetSoftware || '';
       document.getElementById('operationGuideTemperature').value = config.temperature ?? 0.2;
       document.getElementById('operationGuideTemperatureVal').textContent = config.temperature ?? 0.2;
       document.getElementById('operationGuideMaxTokens').value = config.maxTokens ?? 1200;
@@ -1148,6 +1160,7 @@
         apiKey: document.getElementById('operationGuideApiKey').value,
         baseURL: document.getElementById('operationGuideBaseURL').value,
         model: document.getElementById('operationGuideModel').value,
+        lastTargetSoftware: document.getElementById('operationGuideTargetSoftware').value,
         temperature: parseFloat(document.getElementById('operationGuideTemperature').value),
         maxTokens: parseInt(document.getElementById('operationGuideMaxTokens').value),
         systemPrompt: document.getElementById('operationGuideSystemPrompt').value,
@@ -1384,6 +1397,44 @@
         showToast('✓ 分步指引设置已保存', 'success');
       } catch (e) {
         showToast('✗ 保存失败: ' + (e.message || e), 'error');
+      }
+    });
+
+    document.getElementById('startOperationGuideBtn').addEventListener('click', async function() {
+      var btn = this;
+      var target = document.getElementById('operationGuideTargetSoftware').value.trim();
+      if (!target) {
+        showToast('请先输入要安装的软件名称', 'error');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '启动中...';
+      try {
+        document.getElementById('operationGuideEnabled').checked = true;
+        await saveOperationGuideConfig();
+        // @ts-ignore
+        var result = await window.companion.guide.start(target);
+        if (result && result.success) {
+          showToast('✓ 分步指引已启动', 'success');
+        } else {
+          showToast('✗ ' + ((result && result.message) || '启动失败'), 'error');
+        }
+      } catch (e) {
+        showToast('✗ 启动失败: ' + (e.message || e), 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '开始分步指引';
+      }
+    });
+
+    document.getElementById('exitOperationGuideBtn').addEventListener('click', async function() {
+      try {
+        // @ts-ignore
+        await window.companion.guide.exit();
+        showToast('已退出当前指引', 'success');
+      } catch (e) {
+        showToast('✗ 退出失败: ' + (e.message || e), 'error');
       }
     });
 

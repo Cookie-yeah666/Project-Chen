@@ -328,6 +328,14 @@ function setupIPC(): void {
     return { success: true, snapshot: operationGuideManager.getSnapshot() };
   });
 
+  ipcMain.handle('guide-start', async (_event, softwareName: string) => {
+    if (!operationGuideManager) return { success: false, message: '分步指引服务未初始化' };
+    const target = typeof softwareName === 'string' ? softwareName.trim() : '';
+    if (!target) return { success: false, message: '请先输入要安装的软件名称' };
+    await operationGuideManager.start(target);
+    return { success: true, snapshot: operationGuideManager.getSnapshot() };
+  });
+
   ipcMain.handle('guide-exit', async () => {
     if (!operationGuideManager) return { success: false, message: '分步指引服务未初始化' };
     operationGuideManager.exit('已退出当前指引。');

@@ -11,6 +11,7 @@ export interface OperationGuideConfig {
   temperature: number;
   maxTokens: number;
   systemPrompt: string;
+  lastTargetSoftware: string;
 }
 
 const DEFAULT_CONFIG: OperationGuideConfig = {
@@ -21,6 +22,7 @@ const DEFAULT_CONFIG: OperationGuideConfig = {
   model: 'gpt-4o-mini',
   temperature: 0.2,
   maxTokens: 1200,
+  lastTargetSoftware: '',
   systemPrompt: [
     '你是分步操作指引规划助手。',
     '你的任务是把软件下载、安装、配置流程整理成适合电脑新手执行的单步操作队列。',
