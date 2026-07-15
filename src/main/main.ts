@@ -172,6 +172,7 @@ function setupIPC(): void {
 
   ipcMain.on('drag-start', () => {
     transitionEngine?.handleDragStart();
+    moveController?.cancel('drag-start');
     if (!mainWindow || mainWindow.isDestroyed()) return;
     const cursor = screen.getCursorScreenPoint();
     const [winX, winY] = mainWindow.getPosition();
