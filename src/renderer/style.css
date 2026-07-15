@@ -250,6 +250,68 @@ html, body {
   border-top: 5px solid rgba(255, 255, 255, 0.92);
 }
 
+#guide-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 54px;
+  transform: translateX(-50%);
+  width: 210px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(32, 34, 38, 0.72);
+  color: rgba(255, 255, 255, 0.94);
+  font-family: 'Microsoft YaHei', sans-serif;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(8px);
+  z-index: 150;
+}
+
+#guide-panel.hidden {
+  display: none;
+}
+
+#guide-title {
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+#guide-message {
+  margin-top: 4px;
+  min-height: 30px;
+  max-height: 42px;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+#guide-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+#guide-actions button {
+  flex: 1 1 0;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 12px;
+  font-family: 'Microsoft YaHei', sans-serif;
+  cursor: pointer;
+}
+
+#guide-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* 聊天输入框 */
 #chat-input-wrap {
   position: absolute;

@@ -89,6 +89,11 @@
   var chatInputWrapEl = document.getElementById('chat-input-wrap') as HTMLDivElement;
   var chatInputEl = document.getElementById('chat-input') as HTMLTextAreaElement;
   var voiceInputBtnEl = document.getElementById('voice-input-btn') as HTMLButtonElement;
+  var guidePanelEl = document.getElementById('guide-panel') as HTMLDivElement | null;
+  var guideTitleEl = document.getElementById('guide-title') as HTMLDivElement | null;
+  var guideMessageEl = document.getElementById('guide-message') as HTMLDivElement | null;
+  var guideNextBtnEl = document.getElementById('guide-next-btn') as HTMLButtonElement | null;
+  var guideExitBtnEl = document.getElementById('guide-exit-btn') as HTMLButtonElement | null;
   var chatStatusTimer: ReturnType<typeof setTimeout> | null = null;
   var activeTtsAudio: HTMLAudioElement | null = null;
 
@@ -644,6 +649,30 @@
     }
   }
 
+  function updateGuidePanel(payload: any): void {
+    if (!guidePanelEl || !guideTitleEl || !guideMessageEl) return;
+    if (!payload || !payload.active) {
+      guidePanelEl.classList.add('hidden');
+      guideTitleEl.textContent = '';
+      guideMessageEl.textContent = '';
+      return;
+    }
+
+    var total = Number(payload.totalSteps) || 0;
+    var current = Number(payload.currentIndex) + 1;
+    var softwareName = typeof payload.softwareName === 'string' ? payload.softwareName : '分步指引';
+    guideTitleEl.textContent = total > 0 ? softwareName + ' · ' + current + '/' + total : softwareName;
+    guideMessageEl.textContent = String(payload.message || payload.currentStep?.instruction || '');
+    guidePanelEl.classList.remove('hidden');
+
+    if (guideNextBtnEl) {
+      guideNextBtnEl.disabled = payload.canNext !== true;
+    }
+    if (guideExitBtnEl) {
+      guideExitBtnEl.disabled = payload.canExit !== true;
+    }
+  }
+
   /** 播放随机音效 */
   function playRandomVoice(): void {
     if (!SPRITE_DIR) return;
@@ -723,6 +752,28 @@
     window.companion.onChatStatus(function (payload: any) {
       updateChatStatus(payload);
     });
+
+    // @ts-ignore
+    if (window.companion.guide && window.companion.guide.onState) {
+      // @ts-ignore
+      window.companion.guide.onState(function (payload: any) {
+        updateGuidePanel(payload);
+      });
+    }
+
+    if (guideNextBtnEl) {
+      guideNextBtnEl.addEventListener('click', function () {
+        // @ts-ignore
+        window.companion.guide?.next?.();
+      });
+    }
+
+    if (guideExitBtnEl) {
+      guideExitBtnEl.addEventListener('click', function () {
+        // @ts-ignore
+        window.companion.guide?.exit?.();
+      });
+    }
 
     // 主进程发来的语音输入状态
     // @ts-ignore

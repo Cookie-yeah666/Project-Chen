@@ -22,6 +22,7 @@ import { MicroBehaviorManager } from '../core/micro-behavior-manager';
 import { WindowActivityService } from '../core/window-activity-service';
 import { MoveController, MoveToRequest } from '../core/move-controller';
 import { ScreenTargetPointer } from '../core/screen-target-pointer';
+import { OperationGuideManager } from '../core/operation-guide-manager';
 import { CameraAwarenessConfigManager } from '../core/camera-awareness-config';
 import { CameraAwarenessManager } from '../core/camera-awareness-manager';
 import { CAMERA_AWARENESS_IPC, CameraFrameInput } from '../core/camera-awareness-types';
@@ -51,6 +52,7 @@ let microBehaviorManager: MicroBehaviorManager;
 let windowActivityService: WindowActivityService;
 let moveController: MoveController;
 let screenTargetPointer: ScreenTargetPointer;
+let operationGuideManager: OperationGuideManager;
 let cameraAwarenessConfigManager: CameraAwarenessConfigManager;
 let visionImageAnalyzer: VisionImageAnalyzer;
 let cameraAwarenessManager: CameraAwarenessManager;
@@ -165,7 +167,15 @@ function createWindow(): void {
     bubbleOrchestrator,
     windowActivityService,
   });
+  operationGuideManager = new OperationGuideManager({
+    mainWindow,
+    aiService,
+    screenAnalyzer,
+    screenTargetPointer,
+    bubbleOrchestrator,
+  });
   chatManager.setScreenTargetPointer(screenTargetPointer);
+  chatManager.setOperationGuideManager(operationGuideManager);
 
   // 连接情绪系统到 TransitionEngine
   transitionEngine.setEmotionUpdater(chatManager.getEmotionUpdater());
@@ -307,6 +317,18 @@ function setupIPC(): void {
   ipcMain.on('user-message', (_event, text: string) => {
     proactiveReactionSystem?.recordDirectInteraction('chat', text.slice(0, 40));
     chatManager?.sendMessage(text);
+  });
+
+  ipcMain.handle('guide-next', async () => {
+    if (!operationGuideManager) return { success: false, message: '分步指引服务未初始化' };
+    await operationGuideManager.next('manual');
+    return { success: true, snapshot: operationGuideManager.getSnapshot() };
+  });
+
+  ipcMain.handle('guide-exit', async () => {
+    if (!operationGuideManager) return { success: false, message: '分步指引服务未初始化' };
+    operationGuideManager.exit('已退出当前指引。');
+    return { success: true, snapshot: operationGuideManager.getSnapshot() };
   });
 
   ipcMain.on('open-settings', () => {

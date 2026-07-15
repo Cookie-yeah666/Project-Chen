@@ -9,6 +9,7 @@ import { EmotionUpdater } from './emotion-updater';
 import { TimeAwareness } from './time-awareness';
 import { ScreenAnalyzer } from './screen-analyzer';
 import { ScreenTargetPointer } from './screen-target-pointer';
+import { OperationGuideManager } from './operation-guide-manager';
 import { TTSManager } from './tts-manager';
 
 export class ChatManager {
@@ -22,6 +23,7 @@ export class ChatManager {
   private screenAnalyzer: ScreenAnalyzer;
   private ttsManager: TTSManager | null = null;
   private screenTargetPointer: ScreenTargetPointer | null = null;
+  private operationGuideManager: OperationGuideManager | null = null;
   private isProcessing = false;
   private lastUserInteraction: number = Date.now();
   private sendChatStatus(phase: 'idle' | 'thinking' | 'screen' | 'speaking' | 'busy' | 'error', message: string = ''): void {
@@ -88,6 +90,17 @@ export class ChatManager {
     this.sendChatStatus('thinking', '思考中...');
 
     try {
+      if (this.operationGuideManager?.isGuideCommand(userMessage)) {
+        this.sendChatStatus('screen', '正在准备分步指引...');
+        const guideMessage = await this.operationGuideManager.handleChatCommand(userMessage);
+        if (guideMessage) {
+          this.memory.addMessage('user', userMessage);
+          this.memory.addMessage('assistant', guideMessage);
+          this.memory.recordInteraction('operation-guide', userMessage, this.stateManager.getCurrentState());
+        }
+        return;
+      }
+
       // 检查是否为屏幕分析请求（"." 开头）
       if (userMessage.startsWith('.')) {
         const screenMessage = userMessage.slice(1).trim() || '描述一下屏幕上有什么';
@@ -370,6 +383,11 @@ export class ChatManager {
   /** 设置屏幕目标指示器 */
   setScreenTargetPointer(pointer: ScreenTargetPointer): void {
     this.screenTargetPointer = pointer;
+  }
+
+  /** 设置分步操作指引管理器 */
+  setOperationGuideManager(manager: OperationGuideManager): void {
+    this.operationGuideManager = manager;
   }
 
   /** 获取记忆模块（供 ObserverManager 使用） */
