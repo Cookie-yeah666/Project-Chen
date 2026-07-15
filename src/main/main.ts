@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, shell } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from 'electron';
 import * as path from 'path';
 import { StateManager } from '../core/state-manager';
 import { TimeAwareness } from '../core/time-awareness';
@@ -562,12 +562,33 @@ function getMainWindowPosition(): { x: number; y: number } {
   return { x, y };
 }
 
+function registerGlobalShortcuts(): void {
+  const shortcuts: Array<{ accelerator: string; action: () => void }> = [
+    { accelerator: 'F11', action: createSettingsWindow },
+    { accelerator: 'F3', action: toggleDebugWindow },
+  ];
+
+  for (const shortcut of shortcuts) {
+    const registered = globalShortcut.register(shortcut.accelerator, shortcut.action);
+    if (!registered) {
+      console.warn(`[Main] Global shortcut ${shortcut.accelerator} registration failed.`);
+    }
+  }
+}
+
 setupIPC();
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  registerGlobalShortcuts();
+});
 
 // 关闭时总结记忆
 app.on('before-quit', async () => {
   await chatManager?.summarizeOnShutdown();
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {

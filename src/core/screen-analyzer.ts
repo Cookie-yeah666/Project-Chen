@@ -7,6 +7,11 @@ import {
   createScreenFingerprintFromBitmap,
 } from './screen-fingerprint';
 
+const DEFAULT_VISION_REQUEST_TIMEOUT_MS = 18000;
+const LOCATE_TARGET_PRECISE_TIMEOUT_MS = 8000;
+const LOCATE_TARGET_LEGACY_TIMEOUT_MS = 5500;
+const LOCATE_TARGET_MAX_TOKENS = 320;
+
 export interface ScreenCaptureFrame {
   imageDataUri: string;
   origin: { x: number; y: number };
@@ -15,11 +20,23 @@ export interface ScreenCaptureFrame {
   fingerprint?: ScreenFingerprint;
 }
 
+export interface ScreenCaptureOptions {
+  highPrecision?: boolean;
+}
+
+export interface ScreenTargetBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface ScreenTargetLocateResult {
   found: boolean;
   label: string;
   confidence: number;
   point?: { x: number; y: number };
+  box?: ScreenTargetBox;
   reason?: string;
 }
 
@@ -64,13 +81,14 @@ export class ScreenAnalyzer {
   }
 
   /** 截取主屏幕并返回坐标映射所需元信息 */
-  async captureScreenFrame(): Promise<ScreenCaptureFrame | null> {
+  async captureScreenFrame(options: ScreenCaptureOptions = {}): Promise<ScreenCaptureFrame | null> {
     try {
       const primaryDisplay = screen.getPrimaryDisplay();
       const displays = screen.getAllDisplays();
+      const thumbnailSize = resolveCaptureThumbnailSize(primaryDisplay.bounds, options);
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
-        thumbnailSize: { width: 1280, height: 720 },
+        thumbnailSize,
       });
 
       console.log('[ScreenAnalyzer][debug] capture sources:', {
@@ -90,7 +108,7 @@ export class ScreenAnalyzer {
       }
 
       const matchedDisplay = displays.find((display) => String(display.id) === String(matchedSource.display_id)) ?? primaryDisplay;
-      const resized = matchedSource.thumbnail.resize({ width: 1280, height: 720 });
+      const resized = matchedSource.thumbnail.resize(thumbnailSize);
       let fingerprint: ScreenFingerprint | undefined;
       try {
         const fingerprintImage = matchedSource.thumbnail.resize({
@@ -141,17 +159,54 @@ export class ScreenAnalyzer {
       throw new Error('屏幕分析未配置，请在设置中配置 Vision API');
     }
 
-    const frame = await this.captureScreenFrame();
+    try {
+      return await this.locateTargetWithCapture(userMessage, {
+        highPrecision: true,
+        visionImageDetail: 'high',
+        promptMode: 'precise',
+        visionRequestTimeoutMs: LOCATE_TARGET_PRECISE_TIMEOUT_MS,
+        visionMaxTokens: LOCATE_TARGET_MAX_TOKENS,
+      });
+    } catch (error: any) {
+      if (!this.isVisionTimeoutError(error)) {
+        throw error;
+      }
+      console.warn('[ScreenAnalyzer] 高精度定位超时，降级为旧判定方式:', error?.message || error);
+    }
+
+    return this.locateTargetWithCapture(userMessage, {
+      highPrecision: false,
+      visionImageDetail: 'low',
+      promptMode: 'legacy',
+      visionRequestTimeoutMs: LOCATE_TARGET_LEGACY_TIMEOUT_MS,
+    });
+  }
+
+  private async locateTargetWithCapture(
+    userMessage: string,
+    options: ScreenCaptureOptions & {
+      visionImageDetail: 'low' | 'high';
+      promptMode: 'precise' | 'legacy';
+      visionRequestTimeoutMs: number;
+      visionMaxTokens?: number;
+    }
+  ): Promise<ScreenTargetLocateResponse> {
+    const config = this.configManager.get();
+    const frame = await this.captureScreenFrame({ highPrecision: options.highPrecision });
     if (!frame) {
       throw new Error('截屏失败');
     }
-
     const response = await this.callVisionAPI(
       frame.imageDataUri,
-      this.buildLocatePrompt(userMessage, frame),
+      options.promptMode === 'precise'
+        ? this.buildPreciseLocatePrompt(userMessage, frame)
+        : this.buildLocatePrompt(userMessage, frame),
       {
         ...config,
         visionSystemPrompt: '你是屏幕目标定位助手，只能输出 JSON，不要输出 Markdown。',
+        visionImageDetail: options.visionImageDetail,
+        visionRequestTimeoutMs: options.visionRequestTimeoutMs,
+        visionMaxTokens: options.visionMaxTokens,
       }
     );
 
@@ -159,6 +214,13 @@ export class ScreenAnalyzer {
       result: this.parseLocateResult(response, frame),
       frame,
     };
+  }
+
+  private isVisionTimeoutError(error: any): boolean {
+    const message = String(error?.message || error || '');
+    if (error?.name === 'AbortError') return true;
+    if (message.includes('超时') || message.toLowerCase().includes('timeout')) return true;
+    return /\(408\)/.test(message);
   }
 
   mapPointToScreen(frame: ScreenCaptureFrame, point: { x: number; y: number }): { x: number; y: number } {
@@ -178,6 +240,22 @@ export class ScreenAnalyzer {
       screenPoint,
     });
     return screenPoint;
+  }
+
+  private buildPreciseLocatePrompt(userMessage: string, frame: ScreenCaptureFrame): string {
+    return [
+      'Locate one visible UI target in the current screenshot.',
+      `User request: ${userMessage}`,
+      `Screenshot size: ${frame.imageSize.width}x${frame.imageSize.height}`,
+      'Coordinate rules: origin is the screenshot top-left corner, x grows right, y grows down.',
+      'Return the tight bounding box of the visible target as box: {x,y,width,height}.',
+      'Return point as the visual center of that box unless a more precise clickable center is obvious.',
+      'Only choose a clear visible button, link, text entry, icon, menu item, or obvious UI region.',
+      'If the target is invisible, ambiguous, or uncertain, return found=false or confidence below 0.72.',
+      'Output one JSON object only. No Markdown.',
+      '{"found":true,"label":"target name","confidence":0.82,"box":{"x":80,"y":180,"width":120,"height":40},"point":{"x":140,"y":200},"reason":"why this is the target"}',
+      '{"found":false,"label":"target name","confidence":0,"reason":"target is not visible in this screenshot"}',
+    ].join('\n');
   }
 
   private buildLocatePrompt(userMessage: string, frame: ScreenCaptureFrame): string {
@@ -213,12 +291,14 @@ export class ScreenAnalyzer {
         : 0;
       const label = typeof parsed.label === 'string' ? parsed.label.trim() : '';
       const reason = typeof parsed.reason === 'string' ? parsed.reason.trim() : '';
-      const point = this.parsePoint(parsed.point, frame);
+      const box = this.parseBox(parsed.box ?? parsed.bbox ?? parsed.boundingBox, frame);
+      const point = this.parsePoint(parsed.point, frame) ?? this.centerOfBox(box);
       const locateResult = {
         found: parsed.found === true && !!point,
         label,
         confidence,
         point,
+        box,
         reason,
       };
       console.log('[ScreenAnalyzer][debug] locate result:', locateResult);
@@ -236,6 +316,45 @@ export class ScreenAnalyzer {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
     if (x < 0 || y < 0 || x > frame.imageSize.width || y > frame.imageSize.height) return undefined;
     return { x: Math.round(x), y: Math.round(y) };
+  }
+
+  private parseBox(value: any, frame: ScreenCaptureFrame): ScreenTargetBox | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const rawX = Number(value.x);
+    const rawY = Number(value.y);
+    const rawWidth = Number(value.width ?? value.w);
+    const rawHeight = Number(value.height ?? value.h);
+    if (
+      !Number.isFinite(rawX) ||
+      !Number.isFinite(rawY) ||
+      !Number.isFinite(rawWidth) ||
+      !Number.isFinite(rawHeight) ||
+      rawWidth <= 0 ||
+      rawHeight <= 0
+    ) {
+      return undefined;
+    }
+
+    const left = clamp(rawX, 0, frame.imageSize.width);
+    const top = clamp(rawY, 0, frame.imageSize.height);
+    const right = clamp(rawX + rawWidth, 0, frame.imageSize.width);
+    const bottom = clamp(rawY + rawHeight, 0, frame.imageSize.height);
+    if (right <= left || bottom <= top) return undefined;
+
+    return {
+      x: Math.round(left),
+      y: Math.round(top),
+      width: Math.round(right - left),
+      height: Math.round(bottom - top),
+    };
+  }
+
+  private centerOfBox(box: ScreenTargetBox | undefined): { x: number; y: number } | undefined {
+    if (!box) return undefined;
+    return {
+      x: Math.round(box.x + box.width / 2),
+      y: Math.round(box.y + box.height / 2),
+    };
   }
 
   /** 调用 Vision API（OpenAI 兼容格式） */
@@ -257,32 +376,80 @@ export class ScreenAnalyzer {
             type: 'image_url',
             image_url: {
               url: imageDataUri,
-              detail: 'low',
+              detail: config.visionImageDetail || 'low',
             },
           },
         ],
       },
     ];
 
-    const response = await fetch(`${config.visionBaseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.visionApiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.visionModel,
-        messages,
-        max_tokens: 1000,
-      }),
-    });
+    const timeoutMs = resolveVisionRequestTimeoutMs(config);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`API 请求失败 (${response.status}): ${error}`);
+    try {
+      const response = await fetch(`${config.visionBaseURL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.visionApiKey}`,
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: config.visionModel,
+          messages,
+          max_tokens: resolveVisionMaxTokens(config),
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`API 请求失败 (${response.status}): ${error}`);
+      }
+
+      const data = await response.json() as any;
+      return data.choices?.[0]?.message?.content ?? '（无响应）';
+    } catch (error: any) {
+      if (controller.signal.aborted) {
+        throw new Error(`Vision 请求超时（${Math.round(timeoutMs / 1000)}秒）`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-
-    const data = await response.json() as any;
-    return data.choices?.[0]?.message?.content ?? '（无响应）';
   }
+}
+
+function resolveCaptureThumbnailSize(
+  bounds: { width: number; height: number },
+  options: ScreenCaptureOptions
+): { width: number; height: number } {
+  const width = Math.max(1, Math.round(bounds.width));
+  const height = Math.max(1, Math.round(bounds.height));
+  if (!options.highPrecision) {
+    return { width: 1280, height: 720 };
+  }
+
+  const maxSide = 1920;
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function resolveVisionRequestTimeoutMs(config: any): number {
+  const value = Number(config?.visionRequestTimeoutMs);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_VISION_REQUEST_TIMEOUT_MS;
+  return Math.min(60000, Math.max(3000, Math.round(value)));
+}
+
+function resolveVisionMaxTokens(config: any): number {
+  const value = Number(config?.visionMaxTokens);
+  if (!Number.isFinite(value) || value <= 0) return 1000;
+  return Math.min(1000, Math.max(64, Math.round(value)));
 }

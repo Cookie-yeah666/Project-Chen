@@ -1,29 +1,22 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, screen } from 'electron';
 import { BubbleOrchestrator } from './bubble-orchestrator';
-import { MoveController } from './move-controller';
+import { MoveController, MoveResult } from './move-controller';
 import { ScreenAnalyzer, ScreenCaptureFrame, ScreenTargetLocateResult } from './screen-analyzer';
 import {
   SCREEN_FINGERPRINT_CHANGE_THRESHOLD,
   compareScreenFingerprints,
 } from './screen-fingerprint';
+import {
+  PointerPose,
+  PointerPoseCandidate,
+  PointerPoseConfig,
+  resolvePointerPoseCandidate,
+} from './screen-target-alignment';
 import { WindowActivityService } from './window-activity-service';
 
-export type PointerPose =
-  | 'point-right'
-  | 'point-right_down'
-  | 'point-down'
-  | 'point-left_down'
-  | 'point-left'
-  | 'point-left_up'
-  | 'point-up'
-  | 'point-right_up';
+export type { PointerPose, PointerPoseConfig } from './screen-target-alignment';
 export type ScreenPointingSessionState = 'capturing' | 'locating' | 'moving' | 'pointing' | 'cancelled' | 'done';
 export type ScreenTargetPointerCancelReason = 'new-request' | 'screen-changed' | 'drag-start' | 'manual';
-
-export interface PointerPoseConfig {
-  pose: PointerPose;
-  pointerOffset: { x: number; y: number };
-}
 
 export interface PointVisualEvent {
   active: boolean;
@@ -67,16 +60,8 @@ const POINTER_KEYWORDS = [
 const CONFIDENCE_THRESHOLD = 0.72;
 const POINT_HOLD_MS = 7000;
 const MOVE_SCREEN_MONITOR_MS = 150;
-const DEFAULT_POSES: Record<PointerPose, PointerPoseConfig> = {
-  'point-right': { pose: 'point-right', pointerOffset: { x: 220, y: 135 } },
-  'point-right_down': { pose: 'point-right_down', pointerOffset: { x: 210, y: 210 } },
-  'point-down': { pose: 'point-down', pointerOffset: { x: 125, y: 235 } },
-  'point-left_down': { pose: 'point-left_down', pointerOffset: { x: 40, y: 210 } },
-  'point-left': { pose: 'point-left', pointerOffset: { x: 30, y: 135 } },
-  'point-left_up': { pose: 'point-left_up', pointerOffset: { x: 40, y: 60 } },
-  'point-up': { pose: 'point-up', pointerOffset: { x: 125, y: 35 } },
-  'point-right_up': { pose: 'point-right_up', pointerOffset: { x: 210, y: 60 } },
-};
+const POST_MOVE_CORRECTION_THRESHOLD_PX = 1.5;
+const POST_MOVE_CORRECTION_MIN_IMPROVEMENT_PX = 0.75;
 
 export class ScreenTargetPointer {
   private mainWindow: BrowserWindow;
@@ -165,10 +150,7 @@ export class ScreenTargetPointer {
 
       const screenPoint = this.screenAnalyzer.mapPointToScreen(located.frame, result.point!);
       const pose = this.choosePose(screenPoint);
-      const moveTopLeft = {
-        x: screenPoint.x - pose.pointerOffset.x,
-        y: screenPoint.y - pose.pointerOffset.y,
-      };
+      const moveTopLeft = pose.clampedTopLeft;
       console.log('[ScreenTargetPointer][debug] move target:', {
         sessionId: id,
         screenPoint,
@@ -183,7 +165,7 @@ export class ScreenTargetPointer {
         screenChangedDuringMove = true;
         this.moveController.cancel('manual');
       });
-      const moveResult = await this.moveController.moveTo({
+      let moveResult = await this.moveController.moveTo({
         x: moveTopLeft.x,
         y: moveTopLeft.y,
         anchor: 'top-left',
@@ -191,11 +173,16 @@ export class ScreenTargetPointer {
         speedPxPerSec: 520,
       });
 
-      this.clearMoveMonitor();
-
       if (!this.isCurrent(id)) {
+        this.clearMoveMonitor();
         return this.cancelledResult('new-request');
       }
+
+      if (!moveResult.cancelled) {
+        moveResult = await this.correctPointerAlignmentIfNeeded(id, screenPoint, pose, moveResult);
+      }
+
+      this.clearMoveMonitor();
 
       const afterMoveTitle = await this.windowActivityService.getActiveWindowTitle();
       if (screenChangedDuringMove || this.hasScreenChanged(beforeTitle, afterMoveTitle)) {
@@ -278,14 +265,15 @@ export class ScreenTargetPointer {
       && Number.isFinite(result.point.y);
   }
 
-  private choosePose(screenPoint: { x: number; y: number }): PointerPoseConfig {
+  private choosePose(screenPoint: { x: number; y: number }): PointerPoseCandidate {
     const bounds = this.mainWindow.getBounds();
     const windowCenterX = bounds.x + bounds.width / 2;
     const windowCenterY = bounds.y + bounds.height / 2;
     const dx = screenPoint.x - windowCenterX;
     const dy = screenPoint.y - windowCenterY;
-    const poseKey = this.poseFromDelta(dx, dy);
-    const pose = DEFAULT_POSES[poseKey];
+    const pose = resolvePointerPoseCandidate(screenPoint, bounds, {
+      clampTopLeft: (topLeft, windowSize) => this.clampWindowTopLeft(topLeft, windowSize),
+    });
 
     console.log('[ScreenTargetPointer][debug] choose pose:', {
       screenPoint,
@@ -299,19 +287,99 @@ export class ScreenTargetPointer {
     return pose;
   }
 
-  private poseFromDelta(dx: number, dy: number): PointerPose {
-    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return 'point-right';
-    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return 'point-right';
+  private async correctPointerAlignmentIfNeeded(
+    sessionId: number,
+    screenPoint: { x: number; y: number },
+    pose: PointerPoseCandidate,
+    moveResult: MoveResult
+  ): Promise<MoveResult> {
+    if (!this.isCurrent(sessionId) || moveResult.cancelled) return moveResult;
 
-    const normalizedDegrees = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
-    if (normalizedDegrees < 22.5 || normalizedDegrees >= 337.5) return 'point-right';
-    if (normalizedDegrees < 67.5) return 'point-right_down';
-    if (normalizedDegrees < 112.5) return 'point-down';
-    if (normalizedDegrees < 157.5) return 'point-left_down';
-    if (normalizedDegrees < 202.5) return 'point-left';
-    if (normalizedDegrees < 247.5) return 'point-left_up';
-    if (normalizedDegrees < 292.5) return 'point-up';
-    return 'point-right_up';
+    const currentTopLeft = moveResult.finalPosition;
+    const currentFinger = {
+      x: currentTopLeft.x + pose.pointerOffset.x,
+      y: currentTopLeft.y + pose.pointerOffset.y,
+    };
+    const currentErrorPx = this.distance(currentFinger, screenPoint);
+    if (currentErrorPx <= POST_MOVE_CORRECTION_THRESHOLD_PX) {
+      return moveResult;
+    }
+
+    const desiredTopLeft = {
+      x: currentTopLeft.x + screenPoint.x - currentFinger.x,
+      y: currentTopLeft.y + screenPoint.y - currentFinger.y,
+    };
+    const bounds = this.mainWindow.getBounds();
+    const correctedTopLeft = this.clampWindowTopLeft(desiredTopLeft, bounds);
+    const correctedFinger = {
+      x: correctedTopLeft.x + pose.pointerOffset.x,
+      y: correctedTopLeft.y + pose.pointerOffset.y,
+    };
+    const correctedErrorPx = this.distance(correctedFinger, screenPoint);
+    const improvementPx = currentErrorPx - correctedErrorPx;
+    const correctionDistancePx = this.distance(currentTopLeft, correctedTopLeft);
+
+    if (
+      correctionDistancePx < 1 ||
+      improvementPx < POST_MOVE_CORRECTION_MIN_IMPROVEMENT_PX ||
+      correctedErrorPx >= currentErrorPx
+    ) {
+      console.log('[ScreenTargetPointer][debug] skip pointer correction:', {
+        sessionId,
+        currentTopLeft,
+        currentFinger,
+        currentErrorPx,
+        correctedTopLeft,
+        correctedFinger,
+        correctedErrorPx,
+        improvementPx,
+      });
+      return moveResult;
+    }
+
+    console.log('[ScreenTargetPointer][debug] pointer correction:', {
+      sessionId,
+      currentTopLeft,
+      currentFinger,
+      currentErrorPx,
+      correctedTopLeft,
+      correctedFinger,
+      correctedErrorPx,
+      improvementPx,
+    });
+
+    return this.moveController.moveTo({
+      x: correctedTopLeft.x,
+      y: correctedTopLeft.y,
+      anchor: 'top-left',
+      reason: 'screen-target-pointer-correction',
+      durationMs: 160,
+    });
+  }
+
+  private clampWindowTopLeft(
+    topLeft: { x: number; y: number },
+    windowBounds: { width: number; height: number }
+  ): { x: number; y: number } {
+    const display = screen.getDisplayNearestPoint({
+      x: Math.round(topLeft.x),
+      y: Math.round(topLeft.y),
+    });
+    const workArea = display.workArea;
+    const minX = workArea.x;
+    const minY = workArea.y;
+    const maxX = Math.max(minX, workArea.x + workArea.width - windowBounds.width);
+    const maxY = Math.max(minY, workArea.y + workArea.height - windowBounds.height);
+    return {
+      x: Math.round(Math.min(maxX, Math.max(minX, topLeft.x))),
+      y: Math.round(Math.min(maxY, Math.max(minY, topLeft.y))),
+    };
+  }
+
+  private distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
   }
 
   private hasScreenChanged(beforeTitle: string, afterTitle: string): boolean {

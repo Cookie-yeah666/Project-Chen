@@ -892,11 +892,12 @@
     var pose = normalizePointPose(payload.pose);
 
     isPointVisualActive = true;
+    clearMoveVisualState(false);
     companionEl.className = 'dragged';
 
     if (pose !== currentPointPose) {
       currentPointPose = pose;
-      setSpriteWithFallback(pose, fallbackSpriteForPose(pose));
+      setSpriteWithFallback(pose, fallbackSpriteForPose(pose), true);
     }
   }
 
@@ -919,9 +920,9 @@
     return 'dragged_right';
   }
 
-  function setSpriteWithFallback(name: string, fallback: string): void {
+  function setSpriteWithFallback(name: string, fallback: string, force?: boolean): void {
     if (!SPRITE_DIR) return;
-    setSprite(name, fallback);
+    setSprite(name, fallback, force);
   }
 
   function playMicroBehavior(payload: any): void {
