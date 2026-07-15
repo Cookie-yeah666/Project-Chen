@@ -91,16 +91,21 @@ export class ScreenAnalyzer {
 
       const matchedDisplay = displays.find((display) => String(display.id) === String(matchedSource.display_id)) ?? primaryDisplay;
       const resized = matchedSource.thumbnail.resize({ width: 1280, height: 720 });
-      const fingerprintImage = matchedSource.thumbnail.resize({
-        width: SCREEN_FINGERPRINT_WIDTH,
-        height: SCREEN_FINGERPRINT_HEIGHT,
-      });
-      const fingerprintSize = fingerprintImage.getSize();
-      const fingerprint = createScreenFingerprintFromBitmap(
-        fingerprintImage.toBitmap(),
-        fingerprintSize.width,
-        fingerprintSize.height
-      ) ?? undefined;
+      let fingerprint: ScreenFingerprint | undefined;
+      try {
+        const fingerprintImage = matchedSource.thumbnail.resize({
+          width: SCREEN_FINGERPRINT_WIDTH,
+          height: SCREEN_FINGERPRINT_HEIGHT,
+        });
+        const fingerprintSize = fingerprintImage.getSize();
+        fingerprint = createScreenFingerprintFromBitmap(
+          fingerprintImage.toBitmap(),
+          fingerprintSize.width,
+          fingerprintSize.height
+        ) ?? undefined;
+      } catch (error: any) {
+        console.warn('[ScreenAnalyzer] 屏幕指纹生成失败，继续返回截图帧:', error.message);
+      }
       const imageSize = resized.getSize();
       const base64 = resized.toPNG().toString('base64');
       const frame: ScreenCaptureFrame = {
