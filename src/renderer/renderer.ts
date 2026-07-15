@@ -414,6 +414,7 @@
   }
 
   function applyVoiceInputConfig(config: any): void {
+    var wasEnabled = voiceInputEnabled;
     voiceInputEnabled = !!(config && config.enabled);
     voiceHoldToTalkShortcut = config && config.holdToTalkShortcut ? config.holdToTalkShortcut : 'Ctrl+Shift+Space';
     voiceInputBtnEl.classList.toggle('disabled', !voiceInputEnabled);
@@ -421,7 +422,10 @@
     voiceInputBtnEl.title = voiceInputEnabled
       ? '语音输入已启用：点击开始/结束，' + voiceHoldToTalkShortcut + ' 长按说话'
       : '语音输入未启用：点击查看提示，F11 设置里可开启';
-    if (voiceInputEnabled && !chatInputWrapEl.classList.contains('hidden')) {
+    if (voiceInputEnabled && !wasEnabled) {
+      openChatInput(chatInputEl.value);
+      updateChatStatus({ phase: 'idle', message: '语音输入已启用，点击麦克风开始说话' });
+    } else if (voiceInputEnabled && !chatInputWrapEl.classList.contains('hidden')) {
       updateChatStatus({ phase: 'idle', message: '语音输入已启用，点击麦克风开始说话' });
     }
   }

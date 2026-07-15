@@ -460,7 +460,9 @@ function setupIPC(): void {
     asrConfigManager.update(config);
     const updatedConfig = asrConfigManager.get();
     voiceAudioCache?.updateConfig(updatedConfig.cache);
-    mainWindow?.webContents.send('asr-config-updated', updatedConfig);
+    BrowserWindow.getAllWindows().forEach((window) => {
+      window.webContents.send('asr-config-updated', updatedConfig);
+    });
     return updatedConfig;
   });
 
