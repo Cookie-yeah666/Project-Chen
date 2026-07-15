@@ -23,6 +23,7 @@ import { WindowActivityService } from '../core/window-activity-service';
 import { MoveController, MoveToRequest } from '../core/move-controller';
 import { ScreenTargetPointer } from '../core/screen-target-pointer';
 import { OperationGuideManager } from '../core/operation-guide-manager';
+import { OperationGuideConfigManager } from '../core/operation-guide-config';
 import { CameraAwarenessConfigManager } from '../core/camera-awareness-config';
 import { CameraAwarenessManager } from '../core/camera-awareness-manager';
 import { CAMERA_AWARENESS_IPC, CameraFrameInput } from '../core/camera-awareness-types';
@@ -53,6 +54,7 @@ let windowActivityService: WindowActivityService;
 let moveController: MoveController;
 let screenTargetPointer: ScreenTargetPointer;
 let operationGuideManager: OperationGuideManager;
+let operationGuideConfigManager: OperationGuideConfigManager;
 let cameraAwarenessConfigManager: CameraAwarenessConfigManager;
 let visionImageAnalyzer: VisionImageAnalyzer;
 let cameraAwarenessManager: CameraAwarenessManager;
@@ -167,9 +169,10 @@ function createWindow(): void {
     bubbleOrchestrator,
     windowActivityService,
   });
+  operationGuideConfigManager = new OperationGuideConfigManager();
   operationGuideManager = new OperationGuideManager({
     mainWindow,
-    aiService,
+    configManager: operationGuideConfigManager,
     screenAnalyzer,
     screenTargetPointer,
     bubbleOrchestrator,
@@ -329,6 +332,14 @@ function setupIPC(): void {
     if (!operationGuideManager) return { success: false, message: '分步指引服务未初始化' };
     operationGuideManager.exit('已退出当前指引。');
     return { success: true, snapshot: operationGuideManager.getSnapshot() };
+  });
+
+  ipcMain.handle('load-operation-guide-config', () => {
+    return operationGuideConfigManager?.get();
+  });
+
+  ipcMain.handle('save-operation-guide-config', (_event, config: any) => {
+    return operationGuideConfigManager?.update(config);
   });
 
   ipcMain.on('open-settings', () => {

@@ -50,6 +50,12 @@ contextBridge.exposeInMainWorld('companion', {
       ipcRenderer.on('guide-state', (_event, payload) => callback(payload));
     },
   },
+  loadOperationGuideConfig: (): Promise<any> => {
+    return ipcRenderer.invoke('load-operation-guide-config');
+  },
+  saveOperationGuideConfig: (config: any): Promise<any> => {
+    return ipcRenderer.invoke('save-operation-guide-config', config);
+  },
   openSettings: () => {
     ipcRenderer.send('open-settings');
   },

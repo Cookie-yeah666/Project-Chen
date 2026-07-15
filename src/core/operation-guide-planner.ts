@@ -1,4 +1,5 @@
-import { AIService, ChatMessage } from './ai-service';
+import { ChatMessage } from './ai-service';
+import { OperationGuideConfig, OperationGuideConfigManager } from './operation-guide-config';
 import {
   OperationGuideAction,
   OperationGuidePlan,
@@ -12,12 +13,17 @@ const MAX_STEPS = 12;
 const ACTIONS: OperationGuideAction[] = ['click', 'scroll', 'input', 'wait', 'open', 'confirm'];
 
 export class OperationGuidePlanner {
-  constructor(private aiService: AIService) {}
+  constructor(private configManager: OperationGuideConfigManager) {}
 
   async buildPlan(softwareName: string, sources: OperationGuideSource[]): Promise<OperationGuidePlan> {
+    if (!this.configManager.isPlannerConfigured()) {
+      return buildFallbackPlan(softwareName, sources);
+    }
+
     try {
+      const config = this.configManager.get();
       const response = await withTimeout(
-        this.aiService.chat(this.buildMessages(softwareName, sources)),
+        callGuidePlannerAPI(this.buildMessages(softwareName, sources, config), config),
         PLAN_TIMEOUT_MS,
         '教程解析超时'
       );
@@ -29,7 +35,11 @@ export class OperationGuidePlanner {
     return buildFallbackPlan(softwareName, sources);
   }
 
-  private buildMessages(softwareName: string, sources: OperationGuideSource[]): ChatMessage[] {
+  private buildMessages(
+    softwareName: string,
+    sources: OperationGuideSource[],
+    config: OperationGuideConfig
+  ): ChatMessage[] {
     const sourceText = sources.length > 0
       ? sources.map((source, index) => [
           `Source ${index + 1}: ${source.title}`,
@@ -41,7 +51,7 @@ export class OperationGuidePlanner {
     return [
       {
         role: 'system',
-        content: [
+        content: config.systemPrompt || [
           'You turn messy web search results into a short Windows installation guide.',
           'Return JSON only. No Markdown.',
           'Every step must describe exactly one user action target.',
@@ -64,6 +74,33 @@ export class OperationGuidePlanner {
       },
     ];
   }
+}
+
+async function callGuidePlannerAPI(
+  messages: ChatMessage[],
+  config: OperationGuideConfig
+): Promise<string> {
+  const response = await fetch(`${config.baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages,
+      temperature: config.temperature,
+      max_tokens: config.maxTokens,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`指引 API 请求失败 (${response.status}): ${error}`);
+  }
+
+  const data = await response.json() as any;
+  return data.choices?.[0]?.message?.content ?? '';
 }
 
 export function parseGuidePlan(raw: string, fallbackSoftwareName: string): OperationGuidePlan {

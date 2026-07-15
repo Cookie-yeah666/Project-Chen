@@ -142,6 +142,7 @@
     <button class="tab-btn active" data-tab="appearance">外观设置</button>
     <button class="tab-btn" data-tab="chat">聊天模型</button>
     <button class="tab-btn" data-tab="vision">屏幕分析</button>
+    <button class="tab-btn" data-tab="guide">分步指引</button>
     <button class="tab-btn" data-tab="camera">摄像头感知</button>
     <button class="tab-btn" data-tab="tts">语音</button>
     <button class="tab-btn" data-tab="asr">语音输入</button>
@@ -271,6 +272,76 @@
       <div class="btn-row">
         <button class="btn btn-primary" id="saveVisionBtn">保存</button>
         <button class="btn btn-secondary" id="testVisionBtn">测试截屏分析</button>
+      </div>
+    </div>
+
+    <!-- 分步指引 -->
+    <div class="tab-content" id="tab-guide">
+      <h2>分步操作指引助手</h2>
+      <hr class="divider">
+      <div class="hint" style="margin-bottom: 12px; color: #666;">
+        开启后可输入“开始指引 Claude客户端”或“帮我安装 VSCode”。视觉标注仍由桌宠移动和指向动画完成，不绘制红圈。
+      </div>
+
+      <div class="field">
+        <label><input type="checkbox" id="operationGuideEnabled"> 启用分步指引</label>
+        <div class="hint">默认关闭。关闭时不会接管“帮我安装”这类指引命令。</div>
+      </div>
+
+      <div class="field">
+        <label><input type="checkbox" id="operationGuideSearchEnabled"> 启用联网搜索教程</label>
+        <div class="hint">关闭后会使用通用 Windows 安装流程兜底，不联网检索教程。</div>
+      </div>
+
+      <div class="field">
+        <label>快速选择</label>
+        <select id="operationGuidePreset">
+          <option value="">自定义</option>
+          <option value="openai-guide">OpenAI GPT-4o-mini</option>
+          <option value="deepseek-guide">DeepSeek</option>
+          <option value="siliconflow-guide">SiliconFlow</option>
+          <option value="zhipu-guide">智谱 GLM</option>
+          <option value="qwen-guide">通义千问</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>指引 API Key</label>
+        <div class="password-wrap">
+          <input type="password" id="operationGuideApiKey" placeholder="sk-..." />
+          <button class="toggle-pw" id="toggleOperationGuidePw">👁</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>指引 API 地址</label>
+        <input type="text" id="operationGuideBaseURL" placeholder="https://api.openai.com/v1" />
+      </div>
+
+      <div class="field">
+        <label>指引模型</label>
+        <input type="text" id="operationGuideModel" placeholder="gpt-4o-mini" />
+      </div>
+
+      <div class="slider-row">
+        <label>Temperature</label>
+        <input type="range" id="operationGuideTemperature" min="0" max="1" step="0.1" />
+        <span class="value" id="operationGuideTemperatureVal">0.2</span>
+      </div>
+
+      <div class="slider-row">
+        <label>最大输出长度</label>
+        <input type="range" id="operationGuideMaxTokens" min="300" max="3000" step="100" />
+        <span class="value" id="operationGuideMaxTokensVal">1200</span>
+      </div>
+
+      <div class="field">
+        <label>指引规划系统提示词</label>
+        <textarea id="operationGuideSystemPrompt" rows="5"></textarea>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="saveOperationGuideBtn">保存分步指引设置</button>
       </div>
     </div>
 
@@ -725,6 +796,22 @@
       document.getElementById('visionSystemPrompt').value = config.visionSystemPrompt || '你是一个桌面助手，简短描述用户屏幕上的内容。';
     }
 
+    async function loadOperationGuideConfig() {
+      // @ts-ignore
+      var config = await window.companion.loadOperationGuideConfig();
+      if (!config) return;
+      document.getElementById('operationGuideEnabled').checked = config.enabled === true;
+      document.getElementById('operationGuideSearchEnabled').checked = config.searchEnabled !== false;
+      document.getElementById('operationGuideApiKey').value = config.apiKey || '';
+      document.getElementById('operationGuideBaseURL').value = config.baseURL || 'https://api.openai.com/v1';
+      document.getElementById('operationGuideModel').value = config.model || 'gpt-4o-mini';
+      document.getElementById('operationGuideTemperature').value = config.temperature ?? 0.2;
+      document.getElementById('operationGuideTemperatureVal').textContent = config.temperature ?? 0.2;
+      document.getElementById('operationGuideMaxTokens').value = config.maxTokens ?? 1200;
+      document.getElementById('operationGuideMaxTokensVal').textContent = config.maxTokens ?? 1200;
+      document.getElementById('operationGuideSystemPrompt').value = config.systemPrompt || '';
+    }
+
     async function loadAppearance() {
       // @ts-ignore
       var config = await window.companion.loadAppearanceConfig();
@@ -1054,6 +1141,21 @@
       window.companion.saveAIConfig(config);
     }
 
+    async function saveOperationGuideConfig() {
+      var config = {
+        enabled: document.getElementById('operationGuideEnabled').checked,
+        searchEnabled: document.getElementById('operationGuideSearchEnabled').checked,
+        apiKey: document.getElementById('operationGuideApiKey').value,
+        baseURL: document.getElementById('operationGuideBaseURL').value,
+        model: document.getElementById('operationGuideModel').value,
+        temperature: parseFloat(document.getElementById('operationGuideTemperature').value),
+        maxTokens: parseInt(document.getElementById('operationGuideMaxTokens').value),
+        systemPrompt: document.getElementById('operationGuideSystemPrompt').value,
+      };
+      // @ts-ignore
+      await window.companion.saveOperationGuideConfig(config);
+    }
+
     function saveTTSConfig() {
       var getVal = function(id, fallback) {
         var el = document.getElementById(id);
@@ -1116,6 +1218,11 @@
         document.getElementById(id + 'Val').textContent = this.value;
       });
     });
+    ['operationGuideTemperature', 'operationGuideMaxTokens'].forEach(function(id) {
+      document.getElementById(id).addEventListener('input', function() {
+        document.getElementById(id + 'Val').textContent = this.value;
+      });
+    });
 
     // ========== 预设 ==========
     var langPresets = {
@@ -1144,6 +1251,21 @@
       if (p) { document.getElementById('visionBaseURL').value = p.baseURL; document.getElementById('visionModel').value = p.model; }
     });
 
+    var operationGuidePresets = {
+      'openai-guide': { baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+      'deepseek-guide': { baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+      'siliconflow-guide': { baseURL: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3' },
+      'zhipu-guide': { baseURL: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
+      'qwen-guide': { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo' },
+    };
+    document.getElementById('operationGuidePreset').addEventListener('change', function() {
+      var p = operationGuidePresets[this.value];
+      if (p) {
+        document.getElementById('operationGuideBaseURL').value = p.baseURL;
+        document.getElementById('operationGuideModel').value = p.model;
+      }
+    });
+
     // ========== 密码切换 ==========
     document.getElementById('togglePw').addEventListener('click', function() {
       var input = document.getElementById('apiKey');
@@ -1151,6 +1273,10 @@
     });
     document.getElementById('toggleVisionPw').addEventListener('click', function() {
       var input = document.getElementById('visionApiKey');
+      input.type = input.type === 'password' ? 'text' : 'password';
+    });
+    document.getElementById('toggleOperationGuidePw').addEventListener('click', function() {
+      var input = document.getElementById('operationGuideApiKey');
       input.type = input.type === 'password' ? 'text' : 'password';
     });
 
@@ -1250,6 +1376,15 @@
     document.getElementById('saveVisionBtn').addEventListener('click', function() {
       try { saveConfig(); showToast('✓ 配置已保存', 'success'); }
       catch (e) { showToast('✗ 保存失败: ' + (e.message || e), 'error'); }
+    });
+
+    document.getElementById('saveOperationGuideBtn').addEventListener('click', async function() {
+      try {
+        await saveOperationGuideConfig();
+        showToast('✓ 分步指引设置已保存', 'success');
+      } catch (e) {
+        showToast('✗ 保存失败: ' + (e.message || e), 'error');
+      }
     });
 
     // 测试截屏分析
@@ -1496,6 +1631,7 @@
 
     // ========== 初始化 ==========
     loadConfig();
+    loadOperationGuideConfig();
     loadAppearance();
     loadTTSConfig();
     loadASRConfig();

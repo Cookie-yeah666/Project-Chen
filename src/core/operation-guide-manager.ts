@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
-import { AIService } from './ai-service';
 import { BubbleOrchestrator } from './bubble-orchestrator';
+import { OperationGuideConfigManager } from './operation-guide-config';
 import {
   SCREEN_FINGERPRINT_CHANGE_THRESHOLD,
   compareScreenFingerprints,
@@ -18,7 +18,7 @@ import {
 
 interface OperationGuideManagerOptions {
   mainWindow: BrowserWindow;
-  aiService: AIService;
+  configManager: OperationGuideConfigManager;
   screenAnalyzer: ScreenAnalyzer;
   screenTargetPointer: ScreenTargetPointer;
   bubbleOrchestrator: BubbleOrchestrator;
@@ -32,6 +32,7 @@ export class OperationGuideManager {
   private screenAnalyzer: ScreenAnalyzer;
   private screenTargetPointer: ScreenTargetPointer;
   private bubbleOrchestrator: BubbleOrchestrator;
+  private configManager: OperationGuideConfigManager;
   private searchService = new OperationGuideSearchService();
   private planner: OperationGuidePlanner;
   private plan: OperationGuidePlan | null = null;
@@ -49,7 +50,8 @@ export class OperationGuideManager {
     this.screenAnalyzer = options.screenAnalyzer;
     this.screenTargetPointer = options.screenTargetPointer;
     this.bubbleOrchestrator = options.bubbleOrchestrator;
-    this.planner = new OperationGuidePlanner(options.aiService);
+    this.configManager = options.configManager;
+    this.planner = new OperationGuidePlanner(options.configManager);
   }
 
   isActive(): boolean {
@@ -81,6 +83,13 @@ export class OperationGuideManager {
   }
 
   async start(softwareName: string): Promise<void> {
+    if (!this.configManager.isEnabled()) {
+      this.message = '分步操作指引未启用。请在设置里打开“分步指引”。';
+      this.showBubble(this.message);
+      this.emitState();
+      return;
+    }
+
     const id = this.startSession();
     this.plan = null;
     this.currentIndex = 0;
@@ -91,7 +100,10 @@ export class OperationGuideManager {
     this.emitState();
 
     try {
-      const sources = await this.searchService.searchInstallGuides(softwareName);
+      const config = this.configManager.get();
+      const sources = config.searchEnabled
+        ? await this.searchService.searchInstallGuides(softwareName)
+        : [];
       if (!this.isCurrent(id)) return;
       this.plan = await this.planner.buildPlan(softwareName, sources);
       if (!this.isCurrent(id)) return;
