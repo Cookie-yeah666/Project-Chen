@@ -24,6 +24,57 @@ function testAsrConfigDefaults() {
   });
 }
 
+function testAsrProviderPresets() {
+  const {
+    DEFAULT_ASR_CONFIG,
+    ASR_PROVIDER_PRESETS,
+    applyASRProviderPreset,
+  } = load('core/asr-config.js');
+  const { createASREngine } = load('core/asr-engine.js');
+
+  assert.strictEqual(DEFAULT_ASR_CONFIG.providerPreset, 'openai');
+  assert.strictEqual(ASR_PROVIDER_PRESETS.openai.provider, 'openai-compatible');
+  assert.strictEqual(ASR_PROVIDER_PRESETS.openai.baseUrl, 'https://api.openai.com/v1');
+
+  assert.strictEqual(ASR_PROVIDER_PRESETS['aliyun-bailian'].label, '阿里百炼 / DashScope');
+  assert.strictEqual(ASR_PROVIDER_PRESETS['aliyun-bailian'].provider, 'openai-compatible');
+  assert.strictEqual(
+    ASR_PROVIDER_PRESETS['aliyun-bailian'].baseUrl,
+    'https://dashscope.aliyuncs.com/compatible-mode/v1'
+  );
+  assert.strictEqual(ASR_PROVIDER_PRESETS['aliyun-bailian'].model, '');
+  assert.match(ASR_PROVIDER_PRESETS['aliyun-bailian'].note, /OpenAI-compatible/);
+
+  assert.strictEqual(ASR_PROVIDER_PRESETS['custom-openai-compatible'].provider, 'openai-compatible');
+  assert.strictEqual(ASR_PROVIDER_PRESETS['custom-openai-compatible'].baseUrl, '');
+
+  const config = {
+    ...DEFAULT_ASR_CONFIG,
+    apiKey: 'keep-secret',
+    enabled: true,
+    autoSendFinalTranscript: true,
+    holdToTalkShortcut: 'Alt+Space',
+    cache: {
+      enabled: false,
+      retentionMinutes: 5,
+      maxSessionBytes: 12345,
+    },
+  };
+  const applied = applyASRProviderPreset(config, 'aliyun-bailian');
+  assert.strictEqual(applied.providerPreset, 'aliyun-bailian');
+  assert.strictEqual(applied.provider, 'openai-compatible');
+  assert.strictEqual(applied.baseUrl, 'https://dashscope.aliyuncs.com/compatible-mode/v1');
+  assert.strictEqual(applied.model, '');
+  assert.strictEqual(applied.apiKey, 'keep-secret');
+  assert.strictEqual(applied.enabled, true);
+  assert.strictEqual(applied.autoSendFinalTranscript, true);
+  assert.strictEqual(applied.holdToTalkShortcut, 'Alt+Space');
+  assert.deepStrictEqual(applied.cache, config.cache);
+
+  const engine = createASREngine(applied);
+  assert.strictEqual(engine.provider, 'openai-compatible');
+}
+
 function testAsrEngineFactoryAndParser() {
   const { createASREngine } = load('core/asr-engine.js');
   const { DEFAULT_ASR_CONFIG } = load('core/asr-config.js');
@@ -168,6 +219,7 @@ function testVoiceIpcChannelNames() {
 
 async function run() {
   testAsrConfigDefaults();
+  testAsrProviderPresets();
   testAsrEngineFactoryAndParser();
   await testRealtimeTerminalEventHelper();
   await testRealtimeStreamWaitsForPostCommitFinal();
