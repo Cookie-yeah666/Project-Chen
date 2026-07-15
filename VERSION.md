@@ -1,4 +1,46 @@
-# Quiet Companion - 版本记录
+# Project-Ze - 版本记录
+
+> 旧名 Quiet Companion；当前对外项目名为 Project-Ze。
+
+## Unreleased
+- Renderer 动画守卫修复：为 blink、sleepy、lonely、bubble/subtitle timeout 链加入 handle 清理与 generation 检查，避免 stale callback 覆盖新状态或 guard flag 卡住
+
+## v0.2.17 (2026-07-15)
+- 架构清理：移除旧主动响应路径，集中化活动上下文检测，并共享屏幕分析实例
+- TTS 架构重构：新增统一 TTS 引擎接口，供应商合成实现下沉到 `tts-*.ts` 引擎，`TTSManager` 专注播放、字幕、停止和 `playbackId` 确认
+- 修复 TTS 播放链路：`playbackId` 透传到 renderer，并归一化 inline TTS 音频数据格式
+- 新增通用 `JsonConfigStore<T>`，统一运行态 JSON 配置的默认值合并、读写和错误处理，TTS 配置已接入
+- 新增 `ChatHistoryStore`，将聊天历史持久化边界从 `ai-memory.ts` 拆出，降低 AI 记忆模块职责复杂度
+- 新增 `BubbleOrchestrator`，将主进程气泡请求编排与 `BubbleManager` 的状态门禁/IPC 投递职责分离
+- 补充 TTS 引擎、JSON 配置存储、AI 记忆存储、气泡编排设计/计划文档和 renderer 动画保护设计/实现记录
+
+## v0.2.16 (2026-07-13)
+- 主动回应阈值、冷却、分类关键词、模板和 AI 改写 reason 迁移到 `src/config/proactive-reactions.json`
+- 为后续 AI/微行为系统预留主动部件接口 `evaluateComponent()`，统一返回候选与调试状态
+- 新增主动回应部件说明文档 `docs/proactive-reaction-component.md`，明确边界：不持续监控、不自动截图、不做任务建议
+- 打包配置加入主动回应配置文件，避免发布包缺少运行配置
+
+## v0.2.15 (2026-07-13)
+- Debug 面板新增 Proactive 卡片，展示当前/上一个活动分类、最近候选、拦截原因、预算、最近主动回应和最近直接互动
+- 主动回应系统增加调试快照，便于观察为什么说话或保持沉默
+- 优化主动回应阈值：缩短稳定切换、工作到休息、休息到工作和长专注的触发门槛
+- 近期直接互动后允许更快识别有意义应用切换，提高情绪反馈及时性
+
+## v0.2.14 (2026-07-13)
+- 情境化主动回应系统：基于应用类别、工作/休息切换、长时间专注、返回与近期互动生成候选回应
+- 统一主动气泡出口：ObserverManager 主动回应通过 BubbleManager 状态门禁和短间隔控制
+- 停用旧泛化主动消息定时器，避免 ChatManager 与 ObserverManager 重复主动发言
+- AI 仅用于高价值候选的短句改写，本地规则先决定是否适合回应
+- 普通主动观察不再自动触发截图，Vision 仍保留给显式屏幕分析
+
+## v0.2.13 (2026-07-13)
+- Debug 面板显示关系、互动统计、常用应用和生活习惯提示词
+
+## v0.2.12 (2026-07-13)
+- 轻量互动记忆：记录聊天、拖拽、点击、屏幕分析等互动类型和最近互动轨迹
+- 活动气泡增加冷却，降低重复出现
+- Windows 前台窗口检测改用 Win32 GetForegroundWindow/GetWindowText
+- 修复 AI 连接测试 undefined 兜底和部分动画状态卡住风险
 
 ## v0.2.1 (2026-05-30)
 - AI记忆系统：对话历史持久化，每50条自动生成摘要

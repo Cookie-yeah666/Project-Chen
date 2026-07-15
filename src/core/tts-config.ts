@@ -1,6 +1,4 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { app } from 'electron';
+import { JsonConfigStore } from './json-config-store';
 
 export type TTSMode = 'gpt-sovits' | 'api' | 'mimo' | 'aliyun';
 export type TTSLanguage = 'zh' | 'en' | 'ja';
@@ -28,6 +26,7 @@ export interface TTSConfig {
   // 阿里云百炼 TTS
   aliyunApiKey: string;
   aliyunBaseURL: string;
+  aliyunEndpointPath: string;
   aliyunModel: string;
   aliyunVoice: string;
   aliyunLanguage: string;
@@ -51,51 +50,33 @@ const DEFAULT_CONFIG: TTSConfig = {
   mimoVoice: '冰糖',
   mimoVoiceDesign: '温柔可爱的少女声音，说话轻声细语',
   aliyunApiKey: '',
-  aliyunBaseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+  aliyunBaseURL: 'https://dashscope.aliyuncs.com/api/v1',
+  aliyunEndpointPath: '/services/aigc/multimodal-generation/generation',
   aliyunModel: 'qwen3-tts-flash',
   aliyunVoice: 'Cherry',
   aliyunLanguage: 'auto',
 };
 
 export class TTSConfigManager {
-  private configPath: string;
-  private config: TTSConfig;
+  private store: JsonConfigStore<TTSConfig>;
 
   constructor() {
-    const configDir = path.join(app.getPath('userData'), 'config');
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
-    }
-    this.configPath = path.join(configDir, 'tts.json');
-    this.config = this.load();
-  }
-
-  private load(): TTSConfig {
-    try {
-      if (fs.existsSync(this.configPath)) {
-        const raw = fs.readFileSync(this.configPath, 'utf-8');
-        return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
-      }
-    } catch (e) {
-      console.error('[TTSConfig] 加载失败:', e);
-    }
-    return { ...DEFAULT_CONFIG };
+    this.store = new JsonConfigStore<TTSConfig>({
+      fileName: 'tts.json',
+      defaults: DEFAULT_CONFIG,
+      namespace: 'TTSConfig',
+    });
   }
 
   save(): void {
-    try {
-      fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8');
-    } catch (e) {
-      console.error('[TTSConfig] 保存失败:', e);
-    }
+    this.store.save();
   }
 
   get(): TTSConfig {
-    return this.config;
+    return this.store.get();
   }
 
   update(partial: Partial<TTSConfig>): void {
-    this.config = { ...this.config, ...partial };
-    this.save();
+    this.store.update(partial);
   }
 }

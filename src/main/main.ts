@@ -4,6 +4,7 @@ import { StateManager } from '../core/state-manager';
 import { TimeAwareness } from '../core/time-awareness';
 import { TransitionEngine } from '../core/transition-engine';
 import { BubbleManager } from '../core/bubble-manager';
+import { BubbleOrchestrator } from '../core/bubble-orchestrator';
 import { AIConfigManager } from '../core/ai-config';
 import { AIService } from '../core/ai-service';
 import { ChatManager } from '../core/chat-manager';
@@ -13,6 +14,10 @@ import { ScreenAnalyzer } from '../core/screen-analyzer';
 import { TTSConfigManager } from '../core/tts-config';
 import { TTSManager } from '../core/tts-manager';
 import { ObserverManager } from '../core/observer-manager';
+import { ProactiveReactionSystem } from '../core/proactive-reaction-system';
+import { MicroBehaviorManager } from '../core/micro-behavior-manager';
+import { WindowActivityService } from '../core/window-activity-service';
+import { MoveController, MoveToRequest } from '../core/move-controller';
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
@@ -21,6 +26,7 @@ let stateManager: StateManager;
 let timeAwareness: TimeAwareness;
 let transitionEngine: TransitionEngine;
 let bubbleManager: BubbleManager;
+let bubbleOrchestrator: BubbleOrchestrator;
 let aiConfigManager: AIConfigManager;
 let aiService: AIService;
 let chatManager: ChatManager;
@@ -29,6 +35,10 @@ let screenAnalyzer: ScreenAnalyzer;
 let ttsConfigManager: TTSConfigManager;
 let ttsManager: TTSManager;
 let observerManager: ObserverManager;
+let proactiveReactionSystem: ProactiveReactionSystem;
+let microBehaviorManager: MicroBehaviorManager;
+let windowActivityService: WindowActivityService;
+let moveController: MoveController;
 
 // 拖拽状态（主进程端）
 let isDragging = false;
@@ -96,7 +106,9 @@ function createWindow(): void {
   transitionEngine.start(1000);
 
   // 初始化气泡管理器
-  bubbleManager = new BubbleManager(mainWindow, timeAwareness, stateManager);
+  windowActivityService = new WindowActivityService();
+  bubbleManager = new BubbleManager(mainWindow, timeAwareness, stateManager, windowActivityService);
+  bubbleOrchestrator = new BubbleOrchestrator(bubbleManager);
   // 延迟发送问候语（等渲染进程就绪）
   setTimeout(() => {
     bubbleManager.showGreeting();
@@ -109,15 +121,17 @@ function createWindow(): void {
   // 初始化 AI 模块
   aiConfigManager = new AIConfigManager();
   aiService = new AIService(aiConfigManager);
-  chatManager = new ChatManager(mainWindow, aiConfigManager, aiService, stateManager, timeAwareness);
-  appearanceConfig = new AppearanceConfigManager();
   screenAnalyzer = new ScreenAnalyzer(aiConfigManager);
+  chatManager = new ChatManager(mainWindow, aiConfigManager, aiService, stateManager, timeAwareness, screenAnalyzer);
+  appearanceConfig = new AppearanceConfigManager();
   ttsConfigManager = new TTSConfigManager();
   ttsManager = new TTSManager(mainWindow, ttsConfigManager);
-
-  // 连接活动监视到 ChatManager
-  bubbleManager.setOnActivity((title) => {
-    chatManager?.updateActivity(title);
+  moveController = new MoveController(mainWindow, {
+    sendVisual: (event) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('move-visual', event);
+      }
+    },
   });
 
   // 连接情绪系统到 TransitionEngine
@@ -133,9 +147,13 @@ function createWindow(): void {
   chatManager.setTTSManager(ttsManager);
 
   // 初始化观察系统
+  proactiveReactionSystem = new ProactiveReactionSystem(chatManager.getMemory());
+  microBehaviorManager = new MicroBehaviorManager(mainWindow);
   observerManager = new ObserverManager(
     mainWindow, aiService, chatManager.getEmotionUpdater().getEmotionSystem(),
-    stateManager, chatManager.getMemory(), screenAnalyzer, aiConfigManager
+    stateManager, chatManager.getMemory(), aiConfigManager,
+    bubbleOrchestrator, proactiveReactionSystem, microBehaviorManager,
+    windowActivityService
   );
   observerManager.start(30000); // 每30秒检查一次
 
@@ -167,6 +185,7 @@ function setupIPC(): void {
 
   ipcMain.on('drag-start', () => {
     transitionEngine?.handleDragStart();
+    moveController?.cancel('drag-start');
     if (!mainWindow || mainWindow.isDestroyed()) return;
     const cursor = screen.getCursorScreenPoint();
     const [winX, winY] = mainWindow.getPosition();
@@ -194,11 +213,15 @@ function setupIPC(): void {
     isDragging = false;
     stopDragPoll();
     transitionEngine?.handleDragEnd();
+    chatManager?.recordInteraction('drag', 'end');
+    proactiveReactionSystem?.recordDirectInteraction('drag', 'end');
   });
 
   ipcMain.on('user-click', () => {
     transitionEngine?.handleInteraction();
     observerManager?.recordActivity();
+    chatManager?.recordInteraction('click', 'companion');
+    proactiveReactionSystem?.recordDirectInteraction('click', 'companion');
   });
 
   ipcMain.on('lonely-action', (_event, active: boolean) => {
@@ -215,6 +238,13 @@ function setupIPC(): void {
     mainWindow.setPosition(x + data.deltaX, y + data.deltaY);
   });
 
+  ipcMain.handle('move-to', async (_event, request: MoveToRequest) => {
+    if (!moveController) {
+      return { success: false, cancelled: false, finalPosition: { x: 0, y: 0 } };
+    }
+    return await moveController.moveTo(request);
+  });
+
   ipcMain.on('mouse-enter', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setIgnoreMouseEvents(false);
@@ -228,6 +258,7 @@ function setupIPC(): void {
   });
 
   ipcMain.on('user-message', (_event, text: string) => {
+    proactiveReactionSystem?.recordDirectInteraction('chat', text.slice(0, 40));
     chatManager?.sendMessage(text);
   });
 
@@ -245,7 +276,12 @@ function setupIPC(): void {
 
   ipcMain.handle('test-ai-connection', async () => {
     if (!aiService) return { success: false, message: 'AI 服务未初始化' };
-    return await aiService.testConnection();
+    try {
+      const result = await aiService.testConnection();
+      return result || { success: false, message: 'AI 服务未返回测试结果' };
+    } catch (e: any) {
+      return { success: false, message: '连接测试失败: ' + (e?.message || String(e)) };
+    }
   });
 
   // 日志相关
@@ -275,6 +311,10 @@ function setupIPC(): void {
     return {
       historyCount: chatManager?.getHistoryCount() || 0,
       summary: chatManager?.getSummary() || '',
+      lifePattern: chatManager?.getMemory().getLifePatternPrompt() || '',
+      memory: chatManager?.getMemory().getMemorySnapshot() || null,
+      proactive: proactiveReactionSystem?.getDebugSnapshot() || null,
+      microBehavior: microBehaviorManager?.getDebugSnapshot() || null,
     };
   });
 

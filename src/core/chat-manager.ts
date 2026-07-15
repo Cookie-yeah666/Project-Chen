@@ -22,22 +22,26 @@ export class ChatManager {
   private ttsManager: TTSManager | null = null;
   private isProcessing = false;
   private lastUserInteraction: number = Date.now();
-  private proactiveTimer: ReturnType<typeof setInterval> | null = null;
-  private currentActivity: string = '';
+  private sendChatStatus(phase: 'idle' | 'thinking' | 'screen' | 'speaking' | 'busy' | 'error', message: string = ''): void {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('chat-status', { phase, message });
+    }
+  }
 
   constructor(
     mainWindow: BrowserWindow,
     configManager: AIConfigManager,
     aiService: AIService,
     stateManager: StateManager,
-    timeAwareness: TimeAwareness
+    timeAwareness: TimeAwareness,
+    screenAnalyzer: ScreenAnalyzer
   ) {
     this.mainWindow = mainWindow;
     this.configManager = configManager;
     this.aiService = aiService;
     this.stateManager = stateManager;
     this.memory = new AIMemory(configManager.getConfigDir());
-    this.screenAnalyzer = new ScreenAnalyzer(configManager);
+    this.screenAnalyzer = screenAnalyzer;
 
     // 初始化情绪系统
     this.emotionSystem = new EmotionSystem();
@@ -54,37 +58,40 @@ export class ChatManager {
     // 初始化关系
     this.memory.initRelationship();
 
-    // 启动主动消息定时器（每3分钟检查一次）
-    this.proactiveTimer = setInterval(() => {
-      this.checkProactiveMessage();
-    }, 3 * 60 * 1000);
+    // 主动回应由 ObserverManager + ProactiveReactionSystem 统一处理，避免多套主动气泡互相竞争。
   }
 
   /** 发送用户消息并获取 AI 回复 */
   async sendMessage(userMessage: string): Promise<void> {
     if (this.isProcessing) {
       this.sendBubble('等一下，我还在想...');
+      this.sendChatStatus('busy', '还在想上一句');
       return;
     }
 
     if (!this.configManager.isValid()) {
       this.sendBubble('还没有配置 API 哦，请打开设置配置一下~');
+      this.sendChatStatus('error', 'AI 未配置');
       return;
     }
 
     this.isProcessing = true;
-    this.recordInteraction();
+    this.lastUserInteraction = Date.now();
+    this.emotionUpdater.onInteraction();
     this.sendBubble('思考中...');
+    this.sendChatStatus('thinking', '思考中...');
 
     try {
       // 检查是否为屏幕分析请求（"." 开头）
       if (userMessage.startsWith('.')) {
         const screenMessage = userMessage.slice(1).trim() || '描述一下屏幕上有什么';
         this.sendBubble('正在看屏幕...');
+        this.sendChatStatus('screen', '正在看屏幕...');
         const screenResult = await this.screenAnalyzer.analyze(screenMessage);
         this.sendBubble(screenResult);
         this.memory.addMessage('user', userMessage);
         this.memory.addMessage('assistant', screenResult);
+        this.memory.recordInteraction('screen-analysis', screenMessage, this.stateManager.getCurrentState());
         return;
       }
 
@@ -102,6 +109,7 @@ export class ChatManager {
         `当前状态：${currentState}`,
         emotionPrompt ? `当前情绪：${emotionPrompt}` : '',
         this.memory.getRelationshipPrompt(),
+        this.memory.getLifePatternPrompt(),
       ].filter(Boolean).join('\n');
 
       const systemPrompt = this.memory.buildSystemPrompt(
@@ -160,22 +168,22 @@ export class ChatManager {
       this.memory.addMessage('assistant', fullResponse);
 
       // 关系追踪：聊天增加好感和熟悉
-      this.memory.recordInteraction();
+      this.memory.recordInteraction('chat', userMessage, this.stateManager.getCurrentState());
       this.memory.changeAffection(0.3);     // 普通聊天 +0.3
       this.memory.changeFamiliarity(0.1);   // 聊天后更熟悉 +0.1
 
       // TTS 模式：批量合成，按顺序播放
       // 非 TTS 模式：直接显示气泡
-      if (this.ttsManager) {
+      const ttsEnabled = this.ttsManager?.isEnabled() ?? false;
+      if (ttsEnabled && this.ttsManager) {
         const ttsTexts = texts.map(t => t.slice(0, 200));
-        await this.ttsManager.speakAll(ttsTexts);
-      } else {
-        for (let i = 0; i < texts.length; i++) {
-          if (i > 0) {
-            await this.delay(1500 + Math.random() * 1000);
-          }
-          this.sendBubble(texts[i]);
+        this.sendChatStatus('speaking', '播放回复中...');
+        const played = await this.ttsManager.speakAll(ttsTexts);
+        if (!played) {
+          await this.showTextSequence(texts);
         }
+      } else {
+        await this.showTextSequence(texts);
       }
 
       // 检查是否需要生成摘要（后台异步，不阻塞）
@@ -186,8 +194,10 @@ export class ChatManager {
     } catch (error: any) {
       console.error('[ChatManager] AI 调用失败:', error);
       this.sendBubble('出错了... ' + (error.message || ''));
+      this.sendChatStatus('error', error.message || '出错了');
     } finally {
       this.isProcessing = false;
+      this.sendChatStatus('idle');
     }
   }
 
@@ -243,68 +253,11 @@ export class ChatManager {
     }
   }
 
-  /** 更新活动监视结果（由 BubbleManager 调用） */
-  updateActivity(activity: string): void {
-    this.currentActivity = activity;
-  }
-
   /** 记录用户交互时间 */
-  recordInteraction(): void {
+  recordInteraction(type: string = 'interaction', detail: string = ''): void {
     this.lastUserInteraction = Date.now();
     this.emotionUpdater.onInteraction();
-  }
-
-  /** 检查是否需要发送主动消息 */
-  private async checkProactiveMessage(): Promise<void> {
-    if (this.isProcessing) return;
-    if (!this.configManager.isValid()) return;
-
-    const timeSinceInteraction = Date.now() - this.lastUserInteraction;
-    const PROACTIVE_THRESHOLD = 5 * 60 * 1000; // 5分钟无交互
-
-    if (timeSinceInteraction < PROACTIVE_THRESHOLD) return;
-
-    try {
-      console.log('[ChatManager] 触发主动消息...');
-      await this.sendProactiveMessage();
-    } catch (error: any) {
-      console.error('[ChatManager] 主动消息失败:', error.message);
-    }
-  }
-
-  /** 发送主动消息 */
-  private async sendProactiveMessage(): Promise<void> {
-    const now = new Date();
-    const timeStr = now.toLocaleString('zh-CN', {
-      hour: '2-digit', minute: '2-digit',
-    });
-    const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()];
-    const currentState = this.stateManager.getCurrentState();
-
-    // 构建上下文
-    let context = `现在是${timeStr}，星期${dayOfWeek}。`;
-    context += `用户当前的状态是"${currentState}"。`;
-    if (this.currentActivity) {
-      context += `用户正在使用的应用是"${this.currentActivity}"。`;
-    }
-
-    const config = this.configManager.get();
-    const systemPrompt = this.memory.buildSystemPrompt(config.systemPrompt, RESPONSE_FORMAT_PROMPT);
-    const memoryContext = this.memory.getSummary()
-      ? '\n\n关于用户的一些了解：' + this.memory.getSummary()
-      : '';
-
-    const messages: ChatMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'system', content: `${context}${memoryContext}\n\n你已经一段时间没有和用户聊天了。请结合之前的聊天记录以及当前用户的状态，主动发一段简短的关心或问候。要自然可爱，不要像机器人。不要用<item>标签，直接输出文字，限制30字以内。` },
-    ];
-
-    const response = await this.aiService.chat(messages);
-    if (response && response.trim()) {
-      this.sendBubble(response.trim().slice(0, 30));
-      // 记录这次交互，避免连续触发
-      this.lastUserInteraction = Date.now();
-    }
+    this.memory.recordInteraction(type, detail, this.stateManager.getCurrentState());
   }
 
   /** 解析 AI 响应中的 <item> 标签 */
@@ -349,6 +302,16 @@ export class ChatManager {
       }
     }
     return result.length > 0 ? result : [text];
+  }
+
+  /** 按顺序显示多段文字气泡 */
+  private async showTextSequence(texts: string[]): Promise<void> {
+    for (let i = 0; i < texts.length; i++) {
+      if (i > 0) {
+        await this.delay(1500 + Math.random() * 1000);
+      }
+      this.sendBubble(texts[i]);
+    }
   }
 
   /** 发送气泡到渲染进程 */

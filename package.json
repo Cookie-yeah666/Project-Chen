@@ -1,6 +1,6 @@
 {
   "name": "project-ze",
-  "version": "0.2.11",
+  "version": "0.2.17",
   "description": "An open-source desktop AI companion powered by LLM / 一个基于大语言模型的桌面 AI 伙伴",
   "main": "dist/main/main.js",
   "scripts": {
@@ -28,10 +28,13 @@
     "files": [
       "dist/**/*",
       "src/config/states.json",
+      "src/config/proactive-reactions.json",
+      "src/config/micro-behaviors.json",
       "src/assets/**/*",
       "src/renderer/index.html",
       "src/renderer/style.css",
       "src/main/settings.html",
+      "src/main/debug.html",
       "package.json"
     ],
     "win": {

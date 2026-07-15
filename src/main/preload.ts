@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('companion', {
   sendWindowMoveBy: (data: { deltaX: number; deltaY: number }) => {
     ipcRenderer.send('window-move-by', data);
   },
+  moveTo: (request: any): Promise<any> => {
+    return ipcRenderer.invoke('move-to', request);
+  },
+  onMoveVisual: (callback: (payload: any) => void) => {
+    ipcRenderer.on('move-visual', (_event, payload) => callback(payload));
+  },
   sendMouseEnter: () => {
     ipcRenderer.send('mouse-enter');
   },
@@ -73,8 +79,8 @@ contextBridge.exposeInMainWorld('companion', {
   onUpdatePetSize: (callback: (size: number) => void) => {
     ipcRenderer.on('update-pet-size', (_event, size) => callback(size));
   },
-  onTtsPlay: (callback: (base64: string, text: string) => void) => {
-    ipcRenderer.on('tts-play', (_event, base64, text) => callback(base64, text));
+  onTtsPlay: (callback: (base64: string, text: string, playbackId: string) => void) => {
+    ipcRenderer.on('tts-play', (_event, base64, text, playbackId) => callback(base64, text, playbackId));
   },
   onTtsStop: (callback: () => void) => {
     ipcRenderer.on('tts-stop', () => callback());
@@ -82,8 +88,8 @@ contextBridge.exposeInMainWorld('companion', {
   sendTtsStop: () => {
     ipcRenderer.send('tts-stop');
   },
-  sendTtsPlaybackDone: () => {
-    ipcRenderer.send('tts-playback-done');
+  sendTtsPlaybackDone: (playbackId: string) => {
+    ipcRenderer.send('tts-playback-done', playbackId);
   },
   loadTTSConfig: (): Promise<any> => {
     return ipcRenderer.invoke('load-tts-config');
@@ -108,5 +114,11 @@ contextBridge.exposeInMainWorld('companion', {
   },
   onShowBubble: (callback: (text: string) => void) => {
     ipcRenderer.on('show-bubble', (_event, text) => callback(text));
+  },
+  onChatStatus: (callback: (payload: any) => void) => {
+    ipcRenderer.on('chat-status', (_event, payload) => callback(payload));
+  },
+  onMicroBehavior: (callback: (payload: any) => void) => {
+    ipcRenderer.on('micro-behavior', (_event, payload) => callback(payload));
   },
 });

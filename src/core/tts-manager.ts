@@ -5,12 +5,9 @@
  * 运行在主进程，通过 IPC 发送音频到渲染进程播放。
  */
 
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, ipcMain, IpcMainEvent } from 'electron';
 import { TTSConfigManager, TTSConfig, TTSLanguage } from './tts-config';
-import { TTSGptSoVits } from './tts-gpt-sovits';
-import { TTSApi } from './tts-api';
-import { TTSMiMo } from './tts-mimo';
-import { TTSAliyun } from './tts-aliyun';
+import { TTSAudioResult, createTTSEngine } from './tts-engine';
 import { AIService, ChatMessage } from './ai-service';
 
 export class TTSManager {
@@ -19,6 +16,7 @@ export class TTSManager {
   private aiService: AIService | null = null;
   private isSpeaking = false;
   private queue: string[] = [];
+  private playbackSeq = 0;
 
   constructor(mainWindow: BrowserWindow, configManager: TTSConfigManager) {
     this.mainWindow = mainWindow;
@@ -44,9 +42,9 @@ export class TTSManager {
 
     try {
       const { ttsText, subtitleText } = await this.prepareText(text, config);
-      const audioData = await this.synthesize(ttsText, config);
-      if (audioData) {
-        await this.play(audioData, subtitleText);
+      const audio = await this.synthesize(ttsText, config);
+      if (audio) {
+        await this.play(audio, subtitleText);
       }
     } catch (error: any) {
       console.error('[TTS] speak failed:', error.message);
@@ -59,12 +57,18 @@ export class TTSManager {
     }
   }
 
+  /** 当前 TTS 是否启用 */
+  isEnabled(): boolean {
+    return Boolean(this.configManager.get().on);
+  }
+
   /** 批量合成并按顺序播放（流水线模式） */
-  async speakAll(texts: string[]): Promise<void> {
+  async speakAll(texts: string[]): Promise<boolean> {
     const config = this.configManager.get();
-    if (!config.on || texts.length === 0) return;
+    if (!config.on || texts.length === 0) return false;
 
     this.isSpeaking = true;
+    let playedAny = false;
 
     try {
       // 1. 全部文本并行准备（翻译）
@@ -85,6 +89,7 @@ export class TTSManager {
         }
         if (audioResults[i]) {
           await this.play(audioResults[i]!, prepared[i].subtitleText);
+          playedAny = true;
         }
         // 段间停顿（检查中断）
         if (i < audioResults.length - 1 && this.isSpeaking) {
@@ -96,6 +101,8 @@ export class TTSManager {
     } finally {
       this.isSpeaking = false;
     }
+
+    return playedAny;
   }
 
   /** 准备文本：翻译 TTS 语言和字幕语言 */
@@ -145,21 +152,10 @@ export class TTSManager {
   }
 
   /** 根据配置选择引擎并合成 */
-  private async synthesize(text: string, config: TTSConfig): Promise<ArrayBuffer | null> {
+  private async synthesize(text: string, config: TTSConfig): Promise<TTSAudioResult | null> {
     try {
-      if (config.mode === 'gpt-sovits') {
-        const engine = new TTSGptSoVits(config);
-        return await engine.synthesize(text);
-      } else if (config.mode === 'mimo') {
-        const engine = new TTSMiMo(config);
-        return await engine.synthesize(text);
-      } else if (config.mode === 'aliyun') {
-        const engine = new TTSAliyun(config);
-        return await engine.synthesize(text);
-      } else {
-        const engine = new TTSApi(config);
-        return await engine.synthesize(text);
-      }
+      const engine = createTTSEngine(config);
+      return await engine.synthesize(text);
     } catch (error: any) {
       console.error('[TTS] 合成失败:', error.message);
       return null;
@@ -167,32 +163,37 @@ export class TTSManager {
   }
 
   /** 发送音频数据到渲染进程播放（附带字幕文字） */
-  private play(audioData: ArrayBuffer, text: string): Promise<void> {
+  private play(audio: TTSAudioResult, text: string): Promise<void> {
     return new Promise((resolve) => {
       if (!this.mainWindow || this.mainWindow.isDestroyed()) {
         resolve();
         return;
       }
 
-      // 将 ArrayBuffer 转为 base64
-      const base64 = Buffer.from(audioData).toString('base64');
+      // 使用引擎返回的 base64 音频数据
+      const base64 = audio.base64;
+      const playbackId = String(++this.playbackSeq);
 
-      // 通过 IPC 监听播放完成
-      const { ipcMain } = require('electron');
-      const handler = () => {
+      // 通过 IPC 监听当前播放完成，避免旧音频事件误结束新播放
+      let done = false;
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      const cleanup = () => {
+        if (done) return;
+        done = true;
         ipcMain.removeListener('tts-playback-done', handler);
+        if (timeout) clearTimeout(timeout);
         resolve();
+      };
+      const handler = (_event: IpcMainEvent, finishedId: string) => {
+        if (finishedId === playbackId) cleanup();
       };
       ipcMain.on('tts-playback-done', handler);
 
       // 发送到渲染进程（音频 + 字幕文字）
-      this.mainWindow.webContents.send('tts-play', base64, text);
+      this.mainWindow.webContents.send('tts-play', base64, text, playbackId);
 
       // 超时保护（30秒）
-      setTimeout(() => {
-        ipcMain.removeListener('tts-playback-done', handler);
-        resolve();
-      }, 30000);
+      timeout = setTimeout(cleanup, 30000);
     });
   }
 
@@ -210,20 +211,8 @@ export class TTSManager {
     const config = this.configManager.get();
 
     try {
-      let ok = false;
-      if (config.mode === 'gpt-sovits') {
-        const engine = new TTSGptSoVits(config);
-        ok = await engine.test();
-      } else if (config.mode === 'mimo') {
-        const engine = new TTSMiMo(config);
-        ok = await engine.test();
-      } else if (config.mode === 'aliyun') {
-        const engine = new TTSAliyun(config);
-        ok = await engine.test();
-      } else {
-        const engine = new TTSApi(config);
-        ok = await engine.test();
-      }
+      const engine = createTTSEngine(config);
+      const ok = await engine.test();
 
       return ok
         ? { success: true, message: 'TTS 连接成功' }

@@ -1,28 +1,54 @@
 /**
  * 阿里云百炼 TTS 引擎
  *
- * 调用阿里云百炼 qwen3-tts 系列模型
- * API: POST {baseURL}/chat/completions（OpenAI 兼容格式）
+ * 调用阿里云百炼 qwen3-tts 系列非实时语音合成模型。
+ * 默认 API: POST {baseURL}/services/aigc/multimodal-generation/generation
+ * 格式：DashScope MultiModalConversation。
  *
  * 支持：
  * - qwen3-tts-flash（系统音色）
- * - qwen3-tts-vc-2026-01-22（自定义音色，需先注册）
+ * - qwen3-tts-instruct-flash（指令控制，需服务端支持）
+ * - qwen3-tts-vd-*（设计音色，voice 填实际设计音色 ID）
  */
 
 import { TTSConfig } from './tts-config';
+import { TTSAudioResult, TTSEngine, arrayBufferToBase64, normalizeBase64Audio } from './tts-engine';
 
-export class TTSAliyun {
+export class TTSAliyun implements TTSEngine {
   private config: TTSConfig;
 
   constructor(config: TTSConfig) {
     this.config = config;
   }
 
-  /** 合成语音，返回音频 ArrayBuffer */
-  async synthesize(text: string): Promise<ArrayBuffer> {
-    // DashScope MultiModalConversation 端点
-    const baseURL = this.config.aliyunBaseURL || 'https://dashscope.aliyuncs.com/api/v1';
-    const url = baseURL + '/services/aigc/multimodal-generation/generation';
+  private buildUrl(): string {
+    const baseURL = (this.config.aliyunBaseURL || 'https://dashscope.aliyuncs.com/api/v1').replace(/\/+$/, '');
+    const endpointPath = (this.config.aliyunEndpointPath || '/services/aigc/multimodal-generation/generation').replace(/^\/+/, '');
+    return `${baseURL}/${endpointPath}`;
+  }
+
+  private formatError(status: number, body: string): string {
+    const trimmed = body.trim();
+    if (!trimmed) {
+      return `阿里云 TTS 请求失败 (${status})`;
+    }
+
+    try {
+      const data = JSON.parse(trimmed) as { code?: string; message?: string; request_id?: string };
+      const detail = [data.code, data.message].filter(Boolean).join(' - ');
+      if (detail) {
+        return `阿里云 TTS 请求失败 (${status}): ${detail}`;
+      }
+    } catch {
+      // 非 JSON 响应，使用原始文本。
+    }
+
+    return `阿里云 TTS 请求失败 (${status}): ${trimmed}`;
+  }
+
+  /** 合成语音，返回音频 base64 */
+  async synthesize(text: string): Promise<TTSAudioResult> {
+    const url = this.buildUrl();
     const voice = this.config.aliyunVoice || 'Cherry';
 
     const body: any = {
@@ -30,9 +56,6 @@ export class TTSAliyun {
       input: {
         text: text,
         voice: voice,
-      },
-      parameters: {
-        format: 'wav',
       },
     };
 
@@ -58,7 +81,7 @@ export class TTSAliyun {
     if (!response.ok) {
       const error = await response.text();
       console.error('[Aliyun TTS] 错误响应:', error);
-      throw new Error(`阿里云 TTS 请求失败 (${response.status}): ${error}`);
+      throw new Error(this.formatError(response.status, error));
     }
 
     const data = await response.json() as any;
@@ -71,20 +94,14 @@ export class TTSAliyun {
     }
 
     if (audio.data) {
-      // base64 解码
-      const binary = atob(audio.data);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      return bytes.buffer;
+      return { base64: normalizeBase64Audio(audio.data), mimeType: 'audio/wav' };
     }
 
     if (audio.url) {
       // 下载音频文件
       const audioResponse = await fetch(audio.url);
       if (!audioResponse.ok) throw new Error('下载音频失败');
-      return await audioResponse.arrayBuffer();
+      return { base64: arrayBufferToBase64(await audioResponse.arrayBuffer()), mimeType: 'audio/wav' };
     }
 
     throw new Error('阿里云 TTS 返回格式异常');
@@ -92,11 +109,7 @@ export class TTSAliyun {
 
   /** 测试连接 */
   async test(): Promise<boolean> {
-    try {
-      await this.synthesize('测试');
-      return true;
-    } catch {
-      return false;
-    }
+    await this.synthesize('测试');
+    return true;
   }
 }

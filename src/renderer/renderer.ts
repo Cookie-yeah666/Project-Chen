@@ -47,10 +47,14 @@
   var currentState = 'idle';
   var bubbleTimeout: ReturnType<typeof setTimeout> | null = null;
   var blinkTimer: ReturnType<typeof setTimeout> | null = null;
+  var blinkFrameTimer: ReturnType<typeof setTimeout> | null = null;
+  var blinkGeneration = 0;
   var sleepAnimTimer: ReturnType<typeof setInterval> | null = null;
   var sleepyAnimTimer: ReturnType<typeof setTimeout> | null = null;
+  var sleepyAnimGeneration = 0;
   var lonelyAnimTimer: ReturnType<typeof setTimeout> | null = null;
   var lonelyActionTimer: ReturnType<typeof setTimeout> | null = null;
+  var lonelyAnimGeneration = 0;
   var triedAnimTimer: ReturnType<typeof setTimeout> | null = null;
   var isBlinking = false;
 
@@ -62,6 +66,8 @@
   var dragTransitionDone = false;
   var dragFirstMove = false;
   var isDragVisualActive = false; // 拖拽视觉是否激活（mousedown到mouseup之间）
+  var isMoveVisualActive = false;
+  var currentMoveDirection: string | null = null;
   var sleepyAnimRunning = false;
   var justDragged = false; // 刚完成拖拽，忽略接下来的 click
 
@@ -73,6 +79,9 @@
   var companionEl = document.getElementById('companion')!;
   var spriteEl = document.getElementById('sprite') as HTMLImageElement;
   var bubbleEl = document.getElementById('bubble')!;
+  var chatStatusEl = document.getElementById('chat-status');
+  var chatStatusTimer: ReturnType<typeof setTimeout> | null = null;
+  var activeTtsAudio: HTMLAudioElement | null = null;
 
   function init(): void {
     // @ts-ignore
@@ -234,29 +243,32 @@
   }
 
   function setupChatInput(): void {
-    var chatInput = document.getElementById('chat-input') as HTMLInputElement;
+    var chatInput = document.getElementById('chat-input') as HTMLTextAreaElement;
     if (!chatInput) return;
 
     // 右键伙伴打开输入框
     companionEl.addEventListener('contextmenu', function (e) {
       e.preventDefault();
       e.stopPropagation();
-      chatInput.classList.remove('hidden');
-      chatInput.focus();
+      openChatInput(chatInput, '');
     });
 
-    // 回车发送
+    // Ctrl+Enter 换行，Enter 发送
     chatInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.ctrlKey) {
+        e.preventDefault();
         var text = chatInput.value.trim();
         if (text) {
           // @ts-ignore
           window.companion.sendUserMessage(text);
           chatInput.value = '';
+          chatInput.classList.add('hidden');
+          updateChatStatus({ phase: 'thinking', message: '已发送，思考中...' });
         }
       } else if (e.key === 'Escape') {
         chatInput.classList.add('hidden');
         chatInput.value = '';
+        updateChatStatus({ phase: 'idle' });
       }
     });
 
@@ -267,6 +279,55 @@
         chatInput.value = '';
       }, 200);
     });
+  }
+
+  function openChatInput(chatInput: HTMLTextAreaElement, text: string): void {
+    chatInput.classList.remove('hidden');
+    chatInput.value = text;
+    chatInput.focus();
+    if (text) {
+      chatInput.setSelectionRange(text.length, text.length);
+    }
+    updateChatStatus({ phase: 'idle', message: 'Enter 发送，Ctrl+Enter 换行' });
+  }
+
+  function updateChatStatus(payload: any): void {
+    if (!chatStatusEl || !payload) return;
+    var phase = typeof payload.phase === 'string' ? payload.phase : 'idle';
+    var message = typeof payload.message === 'string' ? payload.message : '';
+
+    if (chatStatusTimer) {
+      clearTimeout(chatStatusTimer);
+      chatStatusTimer = null;
+    }
+
+    chatStatusEl.className = '';
+    if (phase === 'idle' && !message) {
+      chatStatusEl.classList.add('hidden');
+      chatStatusEl.textContent = '';
+      return;
+    }
+
+    var text = message;
+    if (!text) {
+      if (phase === 'thinking') text = '思考中...';
+      else if (phase === 'screen') text = '正在看屏幕...';
+      else if (phase === 'speaking') text = '播放回复中...';
+      else if (phase === 'busy') text = '还在处理上一句';
+      else if (phase === 'error') text = '出错了';
+      else text = '准备聊天';
+    }
+
+    chatStatusEl.textContent = text;
+    chatStatusEl.classList.add('chat-status-visible', 'chat-status-' + phase);
+
+    if (phase === 'idle' || phase === 'error') {
+      chatStatusTimer = setTimeout(function () {
+        if (!chatStatusEl) return;
+        chatStatusEl.classList.add('hidden');
+        chatStatusEl.textContent = '';
+      }, phase === 'error' ? 3500 : 1800);
+    }
   }
 
   /** 播放随机音效 */
@@ -325,6 +386,24 @@
       showBubble(text);
     });
 
+    // 主进程发来的轻量微行为
+    // @ts-ignore
+    window.companion.onMicroBehavior(function (payload: any) {
+      playMicroBehavior(payload);
+    });
+
+    // 主进程发来的自动移动视觉
+    // @ts-ignore
+    window.companion.onMoveVisual(function (payload: any) {
+      updateMoveVisual(payload);
+    });
+
+    // 主进程发来的聊天处理状态
+    // @ts-ignore
+    window.companion.onChatStatus(function (payload: any) {
+      updateChatStatus(payload);
+    });
+
     // 主进程发来的宠物大小更新
     // @ts-ignore
     window.companion.onUpdatePetSize(function (size: number) {
@@ -334,38 +413,112 @@
 
     // TTS 语音播放（附带字幕）
     // @ts-ignore
-    window.companion.onTtsPlay(function (base64: string, text: string) {
+    window.companion.onTtsPlay(function (base64: string, text: string, playbackId: string) {
       // 显示字幕（不自动隐藏，等音频结束）
       if (text) {
         showSubtitle(text);
       }
       var audioSrc = 'data:audio/wav;base64,' + base64;
       var audio = new Audio(audioSrc);
-      audio.onended = function () {
+      activeTtsAudio = audio;
+      var notifyDone = function () {
+        if (activeTtsAudio === audio) activeTtsAudio = null;
         hideSubtitle();
         // @ts-ignore
-        window.companion.sendTtsPlaybackDone();
+        window.companion.sendTtsPlaybackDone(playbackId);
       };
-      audio.onerror = function () {
-        hideSubtitle();
-        // @ts-ignore
-        window.companion.sendTtsPlaybackDone();
-      };
-      audio.play().catch(function () {
-        hideSubtitle();
-        // @ts-ignore
-        window.companion.sendTtsPlaybackDone();
-      });
+      audio.onended = notifyDone;
+      audio.onerror = notifyDone;
+      audio.play().catch(notifyDone);
     });
 
     // @ts-ignore
     window.companion.onTtsStop(function () {
-      // 停止所有音频播放，并触发 ended 事件
-      document.querySelectorAll('audio').forEach(function (a) {
-        a.pause();
-        a.dispatchEvent(new Event('ended'));
-      });
+      if (activeTtsAudio) {
+        activeTtsAudio.pause();
+        activeTtsAudio.dispatchEvent(new Event('ended'));
+        activeTtsAudio = null;
+      }
     });
+  }
+
+  var microBehaviorTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function updateMoveVisual(payload: any): void {
+    if (!payload || !payload.active) {
+      if (!isMoveVisualActive) return;
+      isMoveVisualActive = false;
+      currentMoveDirection = null;
+      lastVisualState = '';
+      updateVisual(currentState, null);
+      return;
+    }
+
+    if (isDragVisualActive) return;
+
+    var direction = payload.direction || 'right';
+    if (direction !== 'left' && direction !== 'right' && direction !== 'up' && direction !== 'down') {
+      direction = 'right';
+    }
+
+    isMoveVisualActive = true;
+    companionEl.className = 'dragged';
+
+    if (direction !== currentMoveDirection) {
+      currentMoveDirection = direction;
+      setSprite('dragged_' + direction);
+    }
+  }
+
+  function playMicroBehavior(payload: any): void {
+    if (!payload || typeof payload.behavior !== 'string') return;
+    var behavior = payload.behavior;
+    var durationMs = typeof payload.durationMs === 'number' && payload.durationMs >= 0 ? payload.durationMs : 700;
+    var direction = typeof payload.direction === 'string' ? payload.direction : 'center';
+
+    clearMicroBehaviorClasses();
+
+    if (behavior === 'none') return;
+    if (behavior === 'pause') {
+      companionEl.classList.add('micro-pause');
+    } else if (behavior === 'wiggle') {
+      companionEl.classList.add('micro-wiggle');
+    } else if (behavior === 'lean') {
+      companionEl.classList.add('micro-lean-' + direction);
+    } else if (behavior === 'state_hint') {
+      companionEl.classList.add('micro-state-hint');
+      if (payload.state === 'curious') companionEl.classList.add('micro-state-curious');
+      if (payload.state === 'comfortable') companionEl.classList.add('micro-state-comfortable');
+    } else if (behavior === 'bubble_delay') {
+      companionEl.classList.add('micro-pause');
+    } else {
+      console.log('[MicroBehavior] unknown behavior:', behavior);
+      return;
+    }
+
+    if (microBehaviorTimer) clearTimeout(microBehaviorTimer);
+    microBehaviorTimer = setTimeout(function () {
+      clearMicroBehaviorClasses();
+    }, durationMs);
+  }
+
+  function clearMicroBehaviorClasses(): void {
+    companionEl.classList.remove(
+      'micro-pause',
+      'micro-wiggle',
+      'micro-lean-left',
+      'micro-lean-right',
+      'micro-lean-up',
+      'micro-lean-down',
+      'micro-lean-center',
+      'micro-state-hint',
+      'micro-state-curious',
+      'micro-state-comfortable'
+    );
+    if (microBehaviorTimer) {
+      clearTimeout(microBehaviorTimer);
+      microBehaviorTimer = null;
+    }
   }
 
   function setSprite(name: string): void {
@@ -391,7 +544,17 @@
     }
   }
 
+  function stopBlinkAnim(): void {
+    blinkGeneration++;
+    if (blinkFrameTimer) {
+      clearTimeout(blinkFrameTimer);
+      blinkFrameTimer = null;
+    }
+    isBlinking = false;
+  }
+
   function stopSleepyAnim(): void {
+    sleepyAnimGeneration++;
     if (sleepyAnimTimer) {
       clearTimeout(sleepyAnimTimer);
       sleepyAnimTimer = null;
@@ -400,22 +563,26 @@
   }
 
   function stopLonelyAnim(): void {
+    lonelyAnimGeneration++;
     if (lonelyAnimTimer) {
       clearTimeout(lonelyAnimTimer);
       lonelyAnimTimer = null;
     }
+    isLonelyExiting = false;
     stopLonelyAction();
   }
 
   /** lonely 动画：lonely_0 → 1 → 2 → 3 → 4 → lonely（停留最终帧） */
   function startLonelyAnim(): void {
     stopLonelyAnim();
+    var generation = ++lonelyAnimGeneration;
     setSprite('lonely_0');
     var frames = ['lonely_1', 'lonely_2', 'lonely_3', 'lonely_4', 'lonely'];
     var i = 0;
     function next(): void {
       lonelyAnimTimer = setTimeout(function () {
-        if (currentState !== 'lonely') return;
+        lonelyAnimTimer = null;
+        if (generation !== lonelyAnimGeneration || currentState !== 'lonely') return;
         setSprite(frames[i]);
         i++;
         if (i < frames.length) {
@@ -440,8 +607,12 @@
 
   /** lonely 退出动画：从当前帧反向播放回 lonely_0 */
   function playLonelyExit(callback: () => void): void {
-    stopLonelyAnim();
+    if (lonelyAnimTimer) {
+      clearTimeout(lonelyAnimTimer);
+      lonelyAnimTimer = null;
+    }
     stopLonelyAction();
+    var generation = ++lonelyAnimGeneration;
     // 找到当前帧在序列中的位置，从那里开始反向
     var fullSeq = ['lonely_0', 'lonely_1', 'lonely_2', 'lonely_3', 'lonely_4', 'lonely'];
     var currentSrc = spriteEl.src;
@@ -462,11 +633,14 @@
     var i = 0;
     function next(): void {
       lonelyAnimTimer = setTimeout(function () {
+        lonelyAnimTimer = null;
+        if (generation !== lonelyAnimGeneration) return;
         setSprite(frames[i]);
         i++;
         if (i < frames.length) {
           next();
         } else {
+          isLonelyExiting = false;
           callback();
         }
       }, 200);
@@ -537,28 +711,38 @@
   function startSleepyAnim(): void {
     if (sleepyAnimRunning) return;
     sleepyAnimRunning = true;
+    var generation = ++sleepyAnimGeneration;
+
+    function isCurrentSleepyAnim(): boolean {
+      if (generation === sleepyAnimGeneration && currentState === 'sleepy') return true;
+      sleepyAnimTimer = null;
+      sleepyAnimRunning = false;
+      return false;
+    }
+
+    function scheduleFrame(callback: () => void, delay: number): void {
+      sleepyAnimTimer = setTimeout(function () {
+        sleepyAnimTimer = null;
+        if (!isCurrentSleepyAnim()) return;
+        callback();
+      }, delay);
+    }
 
     function scheduleNext(): void {
       // 基础停留时间 4~8 秒，然后播放过渡帧
       var baseDelay = 4000 + Math.random() * 4000;
-      sleepyAnimTimer = setTimeout(function () {
-        if (currentState !== 'sleepy') return;
+      scheduleFrame(function () {
         setSprite('sleepy_2');
-        sleepyAnimTimer = setTimeout(function () {
-          if (currentState !== 'sleepy') return;
+        scheduleFrame(function () {
           setSprite('sleepy_3');
-          sleepyAnimTimer = setTimeout(function () {
-            if (currentState !== 'sleepy') return;
+          scheduleFrame(function () {
             setSprite('sleepy'); // 最终帧
-            sleepyAnimTimer = setTimeout(function () {
-              if (currentState !== 'sleepy') return;
+            scheduleFrame(function () {
               // 反向返回
               setSprite('sleepy_3');
-              sleepyAnimTimer = setTimeout(function () {
-                if (currentState !== 'sleepy') return;
+              scheduleFrame(function () {
                 setSprite('sleepy_2');
-                sleepyAnimTimer = setTimeout(function () {
-                  if (currentState !== 'sleepy') return;
+                scheduleFrame(function () {
                   setSprite('sleepy_1'); // 回到主帧
                   scheduleNext(); // 开始下一轮
                 }, 800);
@@ -687,20 +871,23 @@
       playLonelyExit(function () {
         isLonelyExiting = false;
         lastVisualState = '';
-        updateVisual(state, _definition);
+        updateVisual(currentState === state ? state : currentState, _definition);
       });
       return;
     }
 
-    if (isBlinking && state === 'idle') return;
+    // 眨眼期间只允许保持当前 idle/curious/sleepy 视觉，不阻塞状态切换
+    if (isBlinking && (state === 'idle' || state === 'curious' || state === 'sleepy') && state === prevState) return;
     // 拖拽期间不覆盖精灵图
     if (isDragVisualActive) return;
+    // 自动移动期间不覆盖移动方向差分
+    if (isMoveVisualActive) return;
     // 拖拽已结束但主进程还在发旧的 dragged 状态，忽略
     if (state === 'dragged' && !isDragVisualActive) return;
 
     // 离开眨眼状态时重置标记
-    if (state !== 'idle' && state !== 'curious') {
-      isBlinking = false;
+    if (state !== 'idle' && state !== 'curious' && state !== 'sleepy') {
+      stopBlinkAnim();
     }
 
     lastVisualState = state;
@@ -789,14 +976,17 @@
   }
 
   var bubbleHideTimeout: ReturnType<typeof setTimeout> | null = null;
+  var bubbleGeneration = 0;
   var subtitleActive = false; // 字幕正在播放
 
   function showBubble(text: string): void {
     // 字幕播放期间，普通气泡不能覆盖
     if (subtitleActive) return;
 
+    var generation = ++bubbleGeneration;
     if (bubbleTimeout) {
       clearTimeout(bubbleTimeout);
+      bubbleTimeout = null;
     }
     if (bubbleHideTimeout) {
       clearTimeout(bubbleHideTimeout);
@@ -809,14 +999,21 @@
     bubbleEl.classList.add('visible');
 
     bubbleTimeout = setTimeout(function () {
+      bubbleTimeout = null;
+      if (generation !== bubbleGeneration) return;
       bubbleEl.classList.remove('visible');
-      bubbleHideTimeout = setTimeout(function () { bubbleEl.classList.add('hidden'); }, 500);
+      bubbleHideTimeout = setTimeout(function () {
+        bubbleHideTimeout = null;
+        if (generation !== bubbleGeneration) return;
+        bubbleEl.classList.add('hidden');
+      }, 500);
     }, 3000);
   }
 
   /** 显示字幕（不自动隐藏，等 hideSubtitle 调用） */
   function showSubtitle(text: string): void {
     subtitleActive = true;
+    bubbleGeneration++;
     if (bubbleTimeout) {
       clearTimeout(bubbleTimeout);
       bubbleTimeout = null;
@@ -834,8 +1031,21 @@
   /** 隐藏字幕 */
   function hideSubtitle(): void {
     subtitleActive = false;
+    var generation = ++bubbleGeneration;
+    if (bubbleTimeout) {
+      clearTimeout(bubbleTimeout);
+      bubbleTimeout = null;
+    }
+    if (bubbleHideTimeout) {
+      clearTimeout(bubbleHideTimeout);
+      bubbleHideTimeout = null;
+    }
     bubbleEl.classList.remove('visible');
-    setTimeout(function () { bubbleEl.classList.add('hidden'); }, 300);
+    bubbleHideTimeout = setTimeout(function () {
+      bubbleHideTimeout = null;
+      if (generation !== bubbleGeneration) return;
+      bubbleEl.classList.add('hidden');
+    }, 300);
   }
 
   function scheduleNextBlink(): void {
@@ -851,6 +1061,7 @@
       interval = 2000 + Math.random() * 3000 + Math.random() * 3000;
     }
     blinkTimer = setTimeout(function () {
+      blinkTimer = null;
       // sleepy 哈欠播放中不眨眼
       if (currentState === 'sleepy' && sleepyAnimTimer) {
         scheduleNextBlink();
@@ -865,6 +1076,8 @@
 
   function performBlink(): void {
     if (!SPRITE_DIR) return;
+    if (isBlinking) return;
+    var generation = ++blinkGeneration;
     isBlinking = true;
     var speed: number;
     if (currentState === 'curious') {
@@ -878,26 +1091,38 @@
       speed = 80 + Math.random() * 70;
     }
 
+    function finishBlink(): void {
+      blinkFrameTimer = null;
+      if (generation === blinkGeneration) {
+        isBlinking = false;
+      }
+    }
+
     if (currentState === 'sleepy') {
       // sleepy 眨眼：sleepy_1 → sleepy_blink → sleepy_1
       setSprite('sleepy_blink');
-      setTimeout(function () {
+      blinkFrameTimer = setTimeout(function () {
+        if (generation !== blinkGeneration) return;
+        if (currentState !== 'sleepy') { finishBlink(); return; }
         setSprite('sleepy_1');
-        isBlinking = false;
+        finishBlink();
       }, speed * 2);
     } else {
       // idle/curious 眨眼：idle → blink_1 → blink_2 → blink_1 → idle
       setSprite('idle_blink_1');
-      setTimeout(function () {
-        if (currentState !== 'idle' && currentState !== 'curious') { isBlinking = false; return; }
+      blinkFrameTimer = setTimeout(function () {
+        if (generation !== blinkGeneration) return;
+        if (currentState !== 'idle' && currentState !== 'curious') { finishBlink(); return; }
         setSprite('idle_blink_2');
-        setTimeout(function () {
-          if (currentState !== 'idle' && currentState !== 'curious') { isBlinking = false; return; }
+        blinkFrameTimer = setTimeout(function () {
+          if (generation !== blinkGeneration) return;
+          if (currentState !== 'idle' && currentState !== 'curious') { finishBlink(); return; }
           setSprite('idle_blink_1');
-          setTimeout(function () {
-            if (currentState !== 'idle' && currentState !== 'curious') { isBlinking = false; return; }
+          blinkFrameTimer = setTimeout(function () {
+            if (generation !== blinkGeneration) return;
+            if (currentState !== 'idle' && currentState !== 'curious') { finishBlink(); return; }
             setSprite('idle');
-            isBlinking = false;
+            finishBlink();
           }, speed);
         }, speed);
       }, speed);
