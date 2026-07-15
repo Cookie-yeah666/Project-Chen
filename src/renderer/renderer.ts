@@ -93,6 +93,7 @@
   var guideTitleEl = document.getElementById('guide-title') as HTMLDivElement | null;
   var guideMessageEl = document.getElementById('guide-message') as HTMLDivElement | null;
   var guideNextBtnEl = document.getElementById('guide-next-btn') as HTMLButtonElement | null;
+  var guideReidentifyBtnEl = document.getElementById('guide-reidentify-btn') as HTMLButtonElement | null;
   var guideExitBtnEl = document.getElementById('guide-exit-btn') as HTMLButtonElement | null;
   var chatStatusTimer: ReturnType<typeof setTimeout> | null = null;
   var activeTtsAudio: HTMLAudioElement | null = null;
@@ -668,6 +669,9 @@
     if (guideNextBtnEl) {
       guideNextBtnEl.disabled = payload.canNext !== true;
     }
+    if (guideReidentifyBtnEl) {
+      guideReidentifyBtnEl.disabled = payload.canReidentify !== true;
+    }
     if (guideExitBtnEl) {
       guideExitBtnEl.disabled = payload.canExit !== true;
     }
@@ -765,6 +769,13 @@
       guideNextBtnEl.addEventListener('click', function () {
         // @ts-ignore
         window.companion.guide?.next?.();
+      });
+    }
+
+    if (guideReidentifyBtnEl) {
+      guideReidentifyBtnEl.addEventListener('click', function () {
+        // @ts-ignore
+        window.companion.guide?.reidentify?.();
       });
     }
 

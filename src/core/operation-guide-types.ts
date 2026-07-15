@@ -38,6 +38,7 @@ export interface OperationGuideSnapshot {
   currentStep?: OperationGuideStep;
   message: string;
   canNext: boolean;
+  canReidentify: boolean;
   canExit: boolean;
   error?: string;
 }

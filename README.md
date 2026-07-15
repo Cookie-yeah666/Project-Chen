@@ -36,6 +36,7 @@ Desktop Companion → AI Companion → Embodied Agent → Physical Robot
 | Memory System | 对话摘要 + 轻量生活习惯记忆 | ✔ |
 | TTS Voice | GPT-SoVITS / MiMo / 阿里云 / OpenAI | ✔ |
 | Screen Analysis | Vision API 截屏分析 | ✔ |
+| Operation Guide | 桌宠移动 + 指向动画 + 气泡文字的分步软件安装指引 | V1.1 |
 | Voice Input (ASR) | 麦克风按钮 + 长按快捷键，支持 OpenAI / 阿里百炼 / 自定义 OpenAI-compatible 预设 | ✔ |
 | Relationship | 好感度 + 熟悉度系统 | ✔ |
 | Activity Monitor | 窗口标题感知 | ✔ |
@@ -68,10 +69,13 @@ F11 → 设置 → 填写 API Key → 测试连接
 | F11 | 设置 |
 | F12 | 开发者工具 |
 | `.` 开头消息 | 截屏分析 |
+| F11 → 分步指引 | 启用 AI 桌宠分步操作指引，填写独立 API 配置并启动教程 |
 | 麦克风按钮 | 点击开始/结束语音输入 |
 | `Ctrl+Shift+Space` | 长按说话，松开结束 |
 
 ASR 供应商在 F11 设置的“语音输入”页配置。当前内置 OpenAI、阿里百炼 / DashScope、自定义 OpenAI-compatible 三个预设；阿里百炼预设复用 OpenAI-compatible ASR 引擎，需填写 DashScope API Key 和兼容 ASR 模型。
+
+分步指引路线图见 [docs/challenge-cup-operation-guide-roadmap.md](docs/challenge-cup-operation-guide-roadmap.md)。V1 使用屏幕实时感知和互联网教程解析，让桌宠自己移动到目标控件旁并播放指向动画；V2/V3 预留语音交互和摄像头多模态行为感知。
 
 ## Architecture
 

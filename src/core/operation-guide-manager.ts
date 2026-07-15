@@ -26,6 +26,7 @@ interface OperationGuideManagerOptions {
 
 const SCREEN_CHANGE_POLL_MS = 1800;
 const SCREEN_CHANGE_STABLE_DELAY_MS = 1200;
+const SCREEN_CHANGE_STABILITY_RECHECK_MS = 450;
 
 export class OperationGuideManager {
   private mainWindow: BrowserWindow;
@@ -43,6 +44,7 @@ export class OperationGuideManager {
   private sessionId = 0;
   private runningStep = false;
   private screenWatcher: ReturnType<typeof setInterval> | null = null;
+  private screenChangeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private screenWatcherBase: ScreenCaptureFrame | null = null;
 
   constructor(options: OperationGuideManagerOptions) {
@@ -141,6 +143,14 @@ export class OperationGuideManager {
     await this.runCurrentStep(id, reason);
   }
 
+  async reidentify(): Promise<void> {
+    if (!this.plan || this.status === 'completed') return;
+    if (this.runningStep) return;
+    const id = this.sessionId;
+    this.stopScreenWatcher();
+    await this.runCurrentStep(id, 'reidentify');
+  }
+
   exit(message = '已退出当前指引。'): void {
     this.sessionId++;
     this.stopScreenWatcher();
@@ -165,6 +175,7 @@ export class OperationGuideManager {
       currentStep: step,
       message: this.message,
       canNext: !!this.plan && (this.status === 'waiting' || this.status === 'error'),
+      canReidentify: !!this.plan && (this.status === 'waiting' || this.status === 'error'),
       canExit: this.isActive(),
       error: this.error || undefined,
     };
@@ -172,7 +183,7 @@ export class OperationGuideManager {
 
   private async runCurrentStep(
     sessionId: number,
-    reason: 'start' | 'manual' | 'screen-changed'
+    reason: 'start' | 'manual' | 'screen-changed' | 'reidentify'
   ): Promise<void> {
     if (!this.plan || !this.isCurrent(sessionId) || this.runningStep) return;
     const step = this.getCurrentStep();
@@ -186,15 +197,27 @@ export class OperationGuideManager {
     try {
       const targetDescription = this.buildTargetDescription(step);
       const result = await this.screenTargetPointer.pointToTarget(targetDescription, {
-        startBubble: reason === 'screen-changed' ? '页面变了，我重新找下一步位置。' : '我来找这一步要点哪里。',
+        startBubble: reason === 'screen-changed' || reason === 'reidentify'
+          ? '我重新看一眼，继续对准当前这一步。'
+          : '我来找这一步要点哪里。',
         successBubble: step.instruction,
-        failureBubble: `我暂时没在屏幕上找到「${step.target}」。你可以切到相关页面后点“下一步”继续。`,
+        failureBubble: this.failureBubbleForStep(step),
         reason: 'operation-guide',
         monitorScreenAfterPoint: false,
       });
       if (!this.isCurrent(sessionId)) return;
 
-      this.status = result.moved ? 'waiting' : 'error';
+      if (result.cancelReason === 'screen-changed') {
+        this.status = 'waiting';
+        this.error = 'screen-changing';
+        this.message = '页面还在变化，停稳后我会重新对准当前这一步。';
+        this.showBubble(this.message);
+        this.emitState();
+        this.scheduleScreenRelocate(sessionId);
+        return;
+      }
+
+      this.status = 'waiting';
       this.message = result.moved
         ? step.instruction
         : `未找到目标：${step.target}`;
@@ -214,7 +237,8 @@ export class OperationGuideManager {
   }
 
   private async startScreenWatcher(sessionId: number): Promise<void> {
-    this.stopScreenWatcher();
+    this.clearScreenWatchInterval();
+    this.clearScreenChangeDebounce();
     const baseFrame = await this.screenAnalyzer.captureScreenFrame();
     if (!this.isCurrent(sessionId) || !baseFrame?.fingerprint) return;
     this.screenWatcherBase = baseFrame;
@@ -232,14 +256,12 @@ export class OperationGuideManager {
           const diff = compareScreenFingerprints(this.screenWatcherBase.fingerprint, frame.fingerprint);
           if (diff === null || diff < SCREEN_FINGERPRINT_CHANGE_THRESHOLD) return;
 
-          this.stopScreenWatcher();
-          setTimeout(() => {
-            if (this.isCurrent(sessionId) && this.status === 'waiting') {
-              this.next('screen-changed').catch(error => {
-                console.error('[OperationGuideManager] auto next failed:', error?.message || error);
-              });
-            }
-          }, SCREEN_CHANGE_STABLE_DELAY_MS);
+          this.clearScreenWatchInterval();
+          this.screenWatcherBase = null;
+          this.message = '页面变化了，停稳后我重新对准当前这一步。';
+          this.showBubble(this.message);
+          this.emitState();
+          this.scheduleScreenRelocate(sessionId);
         })
         .catch(error => {
           console.warn('[OperationGuideManager] screen watcher failed:', error?.message || error);
@@ -247,12 +269,62 @@ export class OperationGuideManager {
     }, SCREEN_CHANGE_POLL_MS);
   }
 
+  private scheduleScreenRelocate(sessionId: number): void {
+    this.clearScreenChangeDebounce();
+    this.screenChangeDebounceTimer = setTimeout(() => {
+      this.screenChangeDebounceTimer = null;
+      this.relocateCurrentStepAfterScreenChange(sessionId).catch(error => {
+        console.error('[OperationGuideManager] relocalize failed:', error?.message || error);
+      });
+    }, SCREEN_CHANGE_STABLE_DELAY_MS);
+  }
+
+  private async relocateCurrentStepAfterScreenChange(sessionId: number): Promise<void> {
+    if (!this.isCurrent(sessionId) || this.status !== 'waiting' || this.runningStep) return;
+
+    const stable = await this.isScreenStableForRelocate(sessionId);
+    if (!this.isCurrent(sessionId) || this.status !== 'waiting' || this.runningStep) return;
+
+    if (!stable) {
+      this.message = '页面还在动，我再等一下。';
+      this.emitState();
+      this.scheduleScreenRelocate(sessionId);
+      return;
+    }
+
+    await this.runCurrentStep(sessionId, 'screen-changed');
+  }
+
+  private async isScreenStableForRelocate(sessionId: number): Promise<boolean> {
+    const firstFrame = await this.screenAnalyzer.captureScreenFrame();
+    await delay(SCREEN_CHANGE_STABILITY_RECHECK_MS);
+    if (!this.isCurrent(sessionId)) return false;
+    const secondFrame = await this.screenAnalyzer.captureScreenFrame();
+    if (!firstFrame?.fingerprint || !secondFrame?.fingerprint) return true;
+
+    const diff = compareScreenFingerprints(firstFrame.fingerprint, secondFrame.fingerprint);
+    return diff === null || diff < SCREEN_FINGERPRINT_CHANGE_THRESHOLD;
+  }
+
   private stopScreenWatcher(): void {
+    this.clearScreenWatchInterval();
+    this.clearScreenChangeDebounce();
+    this.screenWatcherBase = null;
+  }
+
+  private clearScreenWatchInterval(): void {
     if (this.screenWatcher) {
       clearInterval(this.screenWatcher);
       this.screenWatcher = null;
     }
     this.screenWatcherBase = null;
+  }
+
+  private clearScreenChangeDebounce(): void {
+    if (this.screenChangeDebounceTimer) {
+      clearTimeout(this.screenChangeDebounceTimer);
+      this.screenChangeDebounceTimer = null;
+    }
   }
 
   private complete(): void {
@@ -277,6 +349,13 @@ export class OperationGuideManager {
       step.expectedChange ? `完成后的界面变化：${step.expectedChange}` : '',
       '请定位当前屏幕上最匹配的唯一目标控件。',
     ].filter(Boolean).join('\n');
+  }
+
+  private failureBubbleForStep(step: OperationGuideStep): string {
+    if (step.action === 'scroll') {
+      return `继续滚动到「${step.target}」附近，我看到后会自动指给你。`;
+    }
+    return `我暂时没在屏幕上找到「${step.target}」。你可以把页面停在目标附近；如果这一步已经完成，就点“下一步”。`;
   }
 
   private extractSoftwareName(message: string): string {
@@ -319,6 +398,10 @@ export class OperationGuideManager {
   private showBubble(text: string): void {
     this.bubbleOrchestrator.show({ text, source: 'system', priority: 'high' });
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function cleanupSoftwareName(value: string): string {
