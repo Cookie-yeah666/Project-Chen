@@ -542,7 +542,8 @@
 
       <div class="field">
         <label><input type="checkbox" id="asrEnabled"> 启用语音输入</label>
-        <div class="hint">右键输入框中显示麦克风按钮；快捷键默认为 Ctrl+Shift+Space 长按说话。</div>
+        <div class="hint">右键输入框中显示麦克风按钮；快捷键默认为 Ctrl+Shift+Space 长按说话。开启前需要填写 Base URL、API Key 和模型。</div>
+        <div class="hint" id="asrValidationMessage" style="display: none; color: #c62828; margin-top: 6px;"></div>
       </div>
 
       <div class="field">
@@ -574,18 +575,18 @@
       </div>
 
       <div class="field">
-        <label>Base URL</label>
+        <label>Base URL（启用后必填）</label>
         <input type="text" id="asrBaseUrl" placeholder="https://api.openai.com/v1">
       </div>
 
       <div class="field password-wrap">
-        <label>API Key</label>
-        <input type="password" id="asrApiKey" placeholder="留空则不启用">
+        <label>API Key（启用后必填）</label>
+        <input type="password" id="asrApiKey" placeholder="留空则无法启用语音输入">
       </div>
 
       <div class="field">
-        <label>模型</label>
-        <input type="text" id="asrModel" placeholder="gpt-4o-mini-transcribe">
+        <label>模型（启用后必填）</label>
+        <input type="text" id="asrModel" placeholder="gpt-4o-mini-transcribe / 请填写兼容的 ASR 模型名称">
       </div>
 
       <div class="field">
@@ -973,6 +974,26 @@
       }
     }
 
+    function setASRValidationMessage(message) {
+      var el = document.getElementById('asrValidationMessage');
+      if (!el) return;
+      if (!message) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+      el.style.display = 'block';
+      el.textContent = message;
+    }
+
+    function getMissingASREnabledFields(config) {
+      var missing = [];
+      if (!config.baseUrl) missing.push('Base URL');
+      if (!config.model) missing.push('模型');
+      if (!config.apiKey) missing.push('API Key');
+      return missing;
+    }
+
     function collectASRConfig() {
       return {
         enabled: document.getElementById('asrEnabled').checked,
@@ -1326,16 +1347,23 @@
         showToast('单次录音最大字节必须是大于 0 的数字', 'error');
         return;
       }
-      if (config.enabled && (!config.baseUrl || !config.model || !config.apiKey)) {
-        debugASRSettings('save blocked: missing required enabled fields', {
-          hasBaseUrl: !!config.baseUrl,
-          hasModel: !!config.model,
-          hasApiKey: !!config.apiKey
-        });
-        showToast('启用语音输入时需要 Base URL、模型和 API Key', 'error');
-        return;
+      if (config.enabled) {
+        var missingFields = getMissingASREnabledFields(config);
+        if (missingFields.length > 0) {
+          var message = '语音输入未开启：缺少 ' + missingFields.join(' / ');
+          debugASRSettings('save blocked: missing required enabled fields', {
+            missing: missingFields,
+            hasBaseUrl: !!config.baseUrl,
+            hasModel: !!config.model,
+            hasApiKey: !!config.apiKey
+          });
+          setASRValidationMessage(message);
+          showToast(message, 'error');
+          return;
+        }
       }
       var savedConfig = await window.companion.saveASRConfig(config);
+      setASRValidationMessage('');
       debugASRSettings('save completed', {
         enabled: !!(savedConfig && savedConfig.enabled),
         providerPreset: savedConfig && savedConfig.providerPreset,
