@@ -73,9 +73,24 @@ const POINTER_KEYWORDS = [
   '帮我指',
   '入口',
   '按钮',
+  '图标',
+  '图案',
+  '图片',
+  '文字',
+  '词条',
+  '字样',
+  '标志',
+  '符号',
+  'logo',
+  '搜索框',
   '输入框',
   '菜单',
   '链接',
+  '选项',
+  '标签',
+  '下载按钮',
+  '安装按钮',
+  '官网',
   'where',
   'find',
   'point',
@@ -86,12 +101,41 @@ const POINTER_KEYWORDS = [
   'download',
 ];
 
+const SCREEN_ANALYSIS_ONLY_PATTERNS = [
+  /^(描述|总结|分析|识别|看看|看一下|说说|概括)(一下)?(这个)?(屏幕|页面|窗口|画面)?/i,
+  /^(屏幕|页面|窗口|画面)(上)?(有|是什么|有什么|内容)/i,
+  /^(what|describe|summarize|analyze)\b/i,
+];
+
+const TARGET_ONLY_HINTS = [
+  '下载',
+  '安装',
+  '设置',
+  '搜索',
+  '登录',
+  '注册',
+  '官网',
+  '入口',
+  '图标',
+  '图案',
+  '文字',
+  '词条',
+  '字样',
+  '按钮',
+  '链接',
+  '菜单',
+  '选项',
+  '标签',
+  'logo',
+];
+
 const CONFIDENCE_THRESHOLD = 0.55;
 const TENTATIVE_CONFIDENCE_THRESHOLD = 0.35;
 const POINT_HOLD_MS = 7000;
 const MOVE_SCREEN_MONITOR_MS = 150;
 const POST_MOVE_CORRECTION_THRESHOLD_PX = 1.5;
 const POST_MOVE_CORRECTION_MIN_IMPROVEMENT_PX = 0.75;
+const COMPANION_CAPTURE_HIDE_DELAY_MS = 90;
 
 export class ScreenTargetPointer {
   private mainWindow: BrowserWindow;
@@ -115,12 +159,22 @@ export class ScreenTargetPointer {
   isPointerRequest(message: string): boolean {
     const normalized = this.normalizePointerMessage(message).toLowerCase();
     if (!normalized) return false;
-    return POINTER_KEYWORDS.some(keyword => normalized.includes(keyword.toLowerCase()));
+    if (POINTER_KEYWORDS.some(keyword => normalized.includes(keyword.toLowerCase()))) return true;
+    return this.isLikelyTargetOnlyRequest(normalized);
   }
 
   private normalizePointerMessage(message: string): string {
     const trimmed = message.trim();
     return trimmed.startsWith('.') ? trimmed.slice(1).trim() : trimmed;
+  }
+
+  private isLikelyTargetOnlyRequest(normalized: string): boolean {
+    const compact = normalized.replace(/\s+/g, '');
+    if (!compact) return false;
+    if (SCREEN_ANALYSIS_ONLY_PATTERNS.some(pattern => pattern.test(normalized))) return false;
+    if (/[「『“"'].*[」』”"']/.test(normalized)) return true;
+    if (TARGET_ONLY_HINTS.some(hint => normalized.includes(hint.toLowerCase()))) return true;
+    return compact.length <= 24 && /[\u4e00-\u9fffA-Za-z0-9]/.test(compact) && !/[？?]/.test(compact);
   }
 
   async handle(message: string): Promise<ScreenTargetPointerResult> {
@@ -152,7 +206,7 @@ export class ScreenTargetPointer {
 
     try {
       this.state = 'locating';
-      const located = await this.screenAnalyzer.locateTarget(screenMessage);
+      const located = await this.locateTargetWithoutCompanionOverlay(screenMessage);
       console.log('[ScreenTargetPointer][debug] located:', {
         sessionId: id,
         frame: {
@@ -306,6 +360,30 @@ export class ScreenTargetPointer {
       && !!result.point
       && Number.isFinite(result.point.x)
       && Number.isFinite(result.point.y);
+  }
+
+  private async locateTargetWithoutCompanionOverlay(screenMessage: string) {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      return this.screenAnalyzer.locateTarget(screenMessage);
+    }
+
+    const previousOpacity = this.mainWindow.getOpacity();
+    let cleanFrame: ScreenCaptureFrame | null = null;
+    try {
+      this.mainWindow.setOpacity(0);
+      await delay(COMPANION_CAPTURE_HIDE_DELAY_MS);
+      cleanFrame = await this.screenAnalyzer.captureScreenFrame({ highPrecision: true });
+    } catch (error: any) {
+      console.warn('[ScreenTargetPointer] clean capture failed, falling back to normal capture:', error?.message || error);
+    } finally {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.setOpacity(previousOpacity);
+      }
+    }
+
+    return cleanFrame
+      ? this.screenAnalyzer.locateTarget(screenMessage, cleanFrame)
+      : this.screenAnalyzer.locateTarget(screenMessage);
   }
 
   private choosePose(screenPoint: { x: number; y: number }): PointerPoseCandidate {
@@ -590,4 +668,8 @@ export class ScreenTargetPointer {
       this.holdTimer = null;
     }
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

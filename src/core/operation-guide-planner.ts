@@ -58,6 +58,8 @@ export class OperationGuidePlanner {
           '每一步只能包含一个用户动作和一个唯一目标控件。',
           'instruction 必须是非常短的中文口语提示，例如“点击右上角的安装 Steam”。',
           'target 必须描述屏幕上可见的按钮、链接、输入框、菜单项或安装器控件，方便视觉模型定位。',
+          '如果搜索结果里有可信官网 URL，把 URL 放进第一步 instruction，方便用户点击复制到浏览器。',
+          '下载步骤的 target 必须包含可见文字候选，例如 Download / 下载 / Get / Install / Windows / Client / 官方下载。',
           'Allowed action values: click, scroll, input, wait, open, confirm.',
         ].join('\n'),
       },
@@ -72,6 +74,8 @@ export class OperationGuidePlanner {
           '- 4 to 10 steps.',
           '- 每一步只给一个动作，不要一次讲多个按钮。',
           '- target must be a visible screen element description suitable for vision localization.',
+          '- For download pages, target should include visible text alternatives: Download, 下载, Get, Install, Windows, Client, 官方下载.',
+          '- If a reliable official URL is available, include it in instruction so the UI can render it as a click-to-copy URL.',
           '- instruction 必须短，优先使用简单中文。',
           '- 如果需要滚动，单独生成 scroll 步骤。',
           '- 不要生成自动点击、自动输入或后台操作步骤，只指导用户自己操作。',
@@ -133,26 +137,44 @@ export function buildFallbackPlan(
   sources: OperationGuideSource[] = []
 ): OperationGuidePlan {
   const query = `${softwareName} official download`;
+  const officialSource = pickBestOfficialSource(softwareName, sources);
+  const officialUrl = officialSource?.url || '';
   const steps: OperationGuideStep[] = [
-    {
-      id: 'step-1',
-      action: 'open',
-      target: 'browser address bar or search box',
-      instruction: `打开浏览器，搜索“${query}”。`,
-      expectedChange: 'Search results are visible',
-    },
-    {
-      id: 'step-2',
-      action: 'click',
-      target: `${softwareName} official website or official download result`,
-      instruction: '点击官网或官方下载结果。',
-      expectedChange: 'Official download page opens',
-    },
+    officialUrl
+      ? {
+          id: 'step-1',
+          action: 'open',
+          target: 'browser address bar',
+          instruction: `点击复制官网地址 ${officialUrl}，粘到浏览器地址栏打开。`,
+          expectedChange: 'Official download page opens',
+        }
+      : {
+          id: 'step-1',
+          action: 'open',
+          target: 'browser address bar or search box',
+          instruction: `打开浏览器，搜索“${query}”。`,
+          expectedChange: 'Search results are visible',
+        },
+    officialUrl
+      ? {
+          id: 'step-2',
+          action: 'click',
+          target: `${softwareName} official download page visible Download 下载 Get Install Windows Client button or link`,
+          instruction: '在官网页面点击 Download、下载、Windows 或 Client 按钮。',
+          expectedChange: 'Installer download starts or download page opens',
+        }
+      : {
+          id: 'step-2',
+          action: 'click',
+          target: `${softwareName} official website or official download result 官网 官方下载 result`,
+          instruction: '点击官网或官方下载结果。',
+          expectedChange: 'Official download page opens',
+        },
     {
       id: 'step-3',
       action: 'click',
-      target: 'Download button or Windows download link',
-      instruction: '点击 Windows 的 Download 或下载按钮。',
+      target: `${softwareName} Download 下载 Get Install Windows Client setup installer button or link`,
+      instruction: '点击 Windows 的 Download、下载或安装按钮。',
       expectedChange: 'Installer download starts',
     },
     {
@@ -165,14 +187,14 @@ export function buildFallbackPlan(
     {
       id: 'step-5',
       action: 'click',
-      target: 'Install Next Continue or Run button',
+      target: 'Install 安装 Next 下一步 Continue 继续 Run 运行 button',
       instruction: '点击安装器里的安装、下一步或继续。',
       expectedChange: 'Installation progresses',
     },
     {
       id: 'step-6',
       action: 'confirm',
-      target: 'Finish Open or Launch button',
+      target: 'Finish 完成 Open 打开 Launch 启动 button',
       instruction: '安装完成后点击完成、打开或启动。',
       expectedChange: 'Application opens',
     },
@@ -185,6 +207,28 @@ export function buildFallbackPlan(
       : 'Generic Windows installation fallback guide.',
     steps,
   };
+}
+
+function pickBestOfficialSource(
+  softwareName: string,
+  sources: OperationGuideSource[]
+): OperationGuideSource | undefined {
+  const name = softwareName.toLowerCase().replace(/\s+/g, '');
+  const scored = sources
+    .filter(source => /^https?:\/\//i.test(source.url || ''))
+    .map(source => {
+      const text = `${source.title} ${source.url} ${source.snippet}`.toLowerCase();
+      const compactText = text.replace(/\s+/g, '');
+      let score = 0;
+      if (compactText.includes(name)) score += 3;
+      if (/official|官网|官方网站/.test(text)) score += 3;
+      if (/download|下载|get|install|安装|windows|client/.test(text)) score += 2;
+      if (/github\.com|microsoft\.com|apple\.com|store\.steampowered\.com/.test(text)) score += 1;
+      if (/blog|forum|reddit|知乎|csdn|bilibili|youtube/.test(text)) score -= 2;
+      return { source, score };
+    })
+    .sort((a, b) => b.score - a.score);
+  return scored[0]?.score > 0 ? scored[0].source : undefined;
 }
 
 function sanitizeStep(value: any, index: number): OperationGuideStep | null {

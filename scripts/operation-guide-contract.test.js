@@ -61,6 +61,21 @@ function testFallbackPlanUsesSoftwareNameInBeginnerSteps() {
   assert.ok(plan.steps.some(step => step.target.toLowerCase().includes('download')));
 }
 
+function testFallbackPlanUsesOfficialUrlWhenAvailable() {
+  const plan = buildFallbackPlan('Steam', [
+    {
+      title: 'Steam official download',
+      url: 'https://store.steampowered.com/about/',
+      snippet: 'Download Steam for Windows',
+    },
+  ]);
+
+  assert.strictEqual(plan.steps[0].action, 'open');
+  assert.ok(plan.steps[0].instruction.includes('https://store.steampowered.com/about/'));
+  assert.ok(plan.steps[1].target.includes('Download'));
+  assert.ok(plan.steps[1].target.includes('下载'));
+}
+
 function testNaturalGuideIntentStartsGuide() {
   assert.strictEqual(extractOperationGuideSoftwareName('我想下载 Steam，下一步怎么做？'), 'Steam');
   assert.strictEqual(extractOperationGuideSoftwareName('怎么下载 Codex？'), 'Codex');
@@ -90,6 +105,7 @@ function testParseProgressEvaluation() {
 testParseGuidePlanFromJsonEnvelope();
 testParseGuidePlanFallsBackForInvalidJson();
 testFallbackPlanUsesSoftwareNameInBeginnerSteps();
+testFallbackPlanUsesOfficialUrlWhenAvailable();
 testNaturalGuideIntentStartsGuide();
 testGuideControlCommands();
 testParseProgressEvaluation();

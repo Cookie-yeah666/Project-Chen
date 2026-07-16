@@ -80,6 +80,55 @@ function testVeryWeakPointDoesNotBecomeFound() {
   assert.deepStrictEqual(result.point, { x: 200, y: 300 });
 }
 
+function testNormalizedBoxCoordinatesScaleToFramePixels() {
+  const result = parseLocate(JSON.stringify({
+    found: true,
+    label: '下载',
+    confidence: 0.8,
+    targetKind: 'text',
+    box_2d: [0.25, 0.2, 0.35, 0.3],
+  }));
+
+  assert.strictEqual(result.found, true);
+  assert.deepStrictEqual(result.box, { x: 480, y: 216, width: 192, height: 108 });
+  assert.deepStrictEqual(result.point, { x: 576, y: 270 });
+}
+
+function testRectAndLocationAliasesAreParsed() {
+  const result = parseLocate(JSON.stringify({
+    found: true,
+    label: 'settings icon',
+    confidence: 0.7,
+    targetKind: 'icon',
+    rect: { x: 20, y: 30, w: 40, h: 50 },
+  }));
+
+  assert.strictEqual(result.found, true);
+  assert.deepStrictEqual(result.box, { x: 20, y: 30, width: 40, height: 50 });
+  assert.deepStrictEqual(result.point, { x: 40, y: 55 });
+}
+
+function testCandidateWithLocationWinsOverHigherConfidenceWithoutLocation() {
+  const result = parseLocate(JSON.stringify({
+    found: false,
+    confidence: 0,
+    label: '下载按钮',
+    candidates: [
+      { label: 'Download text only', confidence: 0.95 },
+      {
+        label: '下载按钮',
+        confidence: 0.62,
+        targetKind: 'button',
+        rect: { x: 300, y: 120, width: 160, height: 48 },
+      },
+    ],
+  }));
+
+  assert.strictEqual(result.found, true);
+  assert.strictEqual(result.label, '下载按钮');
+  assert.deepStrictEqual(result.point, { x: 380, y: 144 });
+}
+
 function testPointerIntentCoversChineseAndEnglishTargetRequests() {
   const pointer = new ScreenTargetPointer({
     mainWindow: {},
@@ -91,6 +140,9 @@ function testPointerIntentCoversChineseAndEnglishTargetRequests() {
 
   assert.strictEqual(pointer.isPointerRequest('Download 在哪里'), true);
   assert.strictEqual(pointer.isPointerRequest('这个页面该点哪里'), true);
+  assert.strictEqual(pointer.isPointerRequest('设置图标'), true);
+  assert.strictEqual(pointer.isPointerRequest('下载字样'), true);
+  assert.strictEqual(pointer.isPointerRequest('Steam logo'), true);
   assert.strictEqual(pointer.isPointerRequest('show me where to click'), true);
   assert.strictEqual(pointer.isPointerRequest('总结这个页面'), false);
 }
@@ -176,6 +228,9 @@ testBestCandidateCanRecoverFromFoundFalse();
 testBoxArrayFallsBackToCenterPoint();
 testBoxArrayCanUseLeftTopRightBottomShape();
 testVeryWeakPointDoesNotBecomeFound();
+testNormalizedBoxCoordinatesScaleToFramePixels();
+testRectAndLocationAliasesAreParsed();
+testCandidateWithLocationWinsOverHigherConfidenceWithoutLocation();
 testPointerIntentCoversChineseAndEnglishTargetRequests();
 testAlgorithm3RefinementCropKeepsTargetWithContext();
 testAlgorithm3MapsCropCoordinatesBackToFullFrame();

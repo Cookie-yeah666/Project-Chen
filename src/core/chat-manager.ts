@@ -77,12 +77,6 @@ export class ChatManager {
       return;
     }
 
-    if (!this.configManager.isValid()) {
-      this.sendBubble('还没有配置 API 哦，请打开设置配置一下~');
-      this.sendChatStatus('error', 'AI 未配置');
-      return;
-    }
-
     this.isProcessing = true;
     this.lastUserInteraction = Date.now();
     this.emotionUpdater.onInteraction();
@@ -125,6 +119,12 @@ export class ChatManager {
       }
 
       // 构建三层提示词
+      if (!this.configManager.isValid()) {
+        this.sendBubble('还没有配置 API 哦，请打开设置配置一下~');
+        this.sendChatStatus('error', 'AI 未配置');
+        return;
+      }
+
       const config = this.configManager.get();
 
       // 第三层：当前状态信息

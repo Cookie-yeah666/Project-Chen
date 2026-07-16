@@ -13,7 +13,7 @@ const LOCATE_TARGET_LEGACY_TIMEOUT_MS = 5500;
 const LOCATE_TARGET_BEST_EFFORT_TIMEOUT_MS = 6500;
 const LOCATE_TARGET_REFINE_TIMEOUT_MS = 4500;
 const LOCATE_TARGET_REFINE_MIN_BUDGET_MS = 1200;
-const LOCATE_TARGET_MAX_TOKENS = 520;
+const LOCATE_TARGET_MAX_TOKENS = 760;
 const RELIABLE_LOCATE_CONFIDENCE = 0.62;
 const BEST_EFFORT_POINTABLE_CONFIDENCE = 0.35;
 const LOW_PRECISION_CAPTURE_MAX_SIDE = 1440;
@@ -215,15 +215,26 @@ export class ScreenAnalyzer {
   }
 
   /** 截屏并让 Vision 模型定位用户描述的当前可见目标 */
-  async locateTarget(userMessage: string): Promise<ScreenTargetLocateResponse> {
+  async locateTarget(
+    userMessage: string,
+    frameOverride?: ScreenCaptureFrame
+  ): Promise<ScreenTargetLocateResponse> {
     const config = this.configManager.get();
     if (!config.visionApiKey || !config.visionBaseURL || !config.visionModel) {
       throw new Error('屏幕分析未配置，请在设置中配置 Vision API');
     }
+    const locate = (options: ScreenCaptureOptions & {
+      visionImageDetail: 'low' | 'high';
+      promptMode: 'precise' | 'best-effort' | 'legacy';
+      visionRequestTimeoutMs: number;
+      visionMaxTokens?: number;
+    }) => frameOverride
+      ? this.locateTargetWithFrame(userMessage, frameOverride, options)
+      : this.locateTargetWithCapture(userMessage, options);
 
     try {
       const preciseStartedAt = Date.now();
-      const preciseBase = await this.locateTargetWithCapture(userMessage, {
+      const preciseBase = await locate({
         highPrecision: true,
         visionImageDetail: 'high',
         promptMode: 'precise',
@@ -241,7 +252,7 @@ export class ScreenAnalyzer {
 
       try {
         const bestEffortStartedAt = Date.now();
-        const bestEffortBase = await this.locateTargetWithCapture(userMessage, {
+        const bestEffortBase = await locate({
           highPrecision: true,
           visionImageDetail: 'high',
           promptMode: 'best-effort',
@@ -265,7 +276,7 @@ export class ScreenAnalyzer {
       console.warn('[ScreenAnalyzer] 高精度定位超时，降级为旧判定方式:', error?.message || error);
     }
 
-    return this.locateTargetWithCapture(userMessage, {
+    return locate({
       highPrecision: false,
       visionImageDetail: 'low',
       promptMode: 'legacy',
@@ -287,12 +298,30 @@ export class ScreenAnalyzer {
     if (!frame) {
       throw new Error('截屏失败');
     }
+    return this.locateTargetWithFrame(userMessage, frame, options);
+  }
+
+  private async locateTargetWithFrame(
+    userMessage: string,
+    frame: ScreenCaptureFrame,
+    options: {
+      visionImageDetail: 'low' | 'high';
+      promptMode: 'precise' | 'best-effort' | 'legacy';
+      visionRequestTimeoutMs: number;
+      visionMaxTokens?: number;
+    }
+  ): Promise<ScreenTargetLocateResponse> {
+    const config = this.configManager.get();
     const response = await this.callVisionAPI(
       frame.imageDataUri,
       this.buildLocatePromptForMode(userMessage, frame, options.promptMode),
       {
         ...config,
-        visionSystemPrompt: 'You are a screen target locator. Return one valid JSON object only. Do not use Markdown.',
+        visionSystemPrompt: [
+          'You are a precise screen target locator.',
+          'You must locate Chinese text, English text, icons, images, buttons, inputs, links, menus, and window controls on the screenshot.',
+          'Return one valid JSON object only. Do not use Markdown.',
+        ].join('\n'),
         visionImageDetail: options.visionImageDetail,
         visionRequestTimeoutMs: options.visionRequestTimeoutMs,
         visionMaxTokens: options.visionMaxTokens,
@@ -469,7 +498,10 @@ export class ScreenAnalyzer {
       `Crop image size: ${crop.imageSize.width}x${crop.imageSize.height}.`,
       `Crop maps to full screenshot image box: x=${crop.cropBox.x}, y=${crop.cropBox.y}, width=${crop.cropBox.width}, height=${crop.cropBox.height}, zoom=${crop.scale}.`,
       'Coordinates you return must be in this crop image, after zoom, with origin at the crop top-left.',
-      'Inspect text first: exact text, partial text, button/link text, placeholder text, menu text, title text, and nearby labels.',
+      'If the request asks for Chinese text, a Chinese term, 字样, 词条, or 文字: do OCR and return the tight box around the exact visible text.',
+      'If the request asks for an icon, 图标, 图案, logo, symbol, or picture: return the visual object box itself; use nearby labels only to disambiguate.',
+      'If the request asks for a button/link/menu/input: return the whole clickable control box, not only the text glyphs.',
+      'Inspect exact text, partial text, button/link text, placeholder text, menu text, title text, and nearby labels.',
       'Also inspect icons, logos, button outlines, input boxes, checkboxes, selected tabs, and visual grouping.',
       'Return the most exact clickable/text center. If the target is text, box the text. If it is a button or input, box the whole control.',
       'If the previous candidate is wrong but the correct target is visible inside this crop, return the correct target.',
@@ -602,14 +634,22 @@ export class ScreenAnalyzer {
       `User request: ${userMessage}`,
       `Screenshot size: ${frame.imageSize.width}x${frame.imageSize.height}`,
       'Coordinate rules: origin is the screenshot top-left corner, x grows right, y grows down.',
-      'First do OCR: read all visible text, including button text, link text, menu text, labels, placeholders, tabs, titles, and nearby captions.',
+      'Ignore any Project-Ze desktop pet, companion bubble, guide panel, or controls such as 我完成了 / 重新识别 / 退出 if they appear in the screenshot.',
+      'Important target classes:',
+      '- Chinese text / 汉语词条 / 文字 / 字样: OCR first. Match the exact visible Chinese characters. Return a tight box around the visible text itself.',
+      '- Icon / 图标 / 图案 / logo / symbol / picture: inspect shapes and pictograms. Return the icon/object box itself. Use nearby text only to choose the right icon.',
+      '- Button / link / menu / input: match text, placeholder, icon, color, and surrounding labels. Return the whole clickable control box.',
+      '- Download/install targets: prefer visible controls named Download, 下载, Get, Install, 安装, Windows, Client, 官网, official download.',
+      'First do OCR: read all visible text, including Chinese and English button text, link text, menu text, labels, placeholders, tabs, titles, and nearby captions.',
       'Also inspect visual patterns: icons, logos, colored buttons, input boxes, checkboxes, menus, window controls, and text-associated controls.',
-      'Match by exact text first, then partial text, translated/synonym text, icon meaning, and surrounding UI context.',
-      'If the target is a text label itself, return a tight box around that text and point to its center.',
-      'If the target is a button/link/menu item/input identified by text, return the whole clickable control box, not only the text glyphs.',
-      'If the target is an icon with a nearby label, use both the icon and nearby text to choose the clickable region.',
+      'Match by exact text first, then partial text, Chinese/English equivalent, icon meaning, and surrounding UI context.',
       'Return the tight bounding box of the visible target as box: {x,y,width,height}.',
       'Return point as the clickable center of that box unless a more precise useful point is obvious.',
+      'If several candidates exist, return candidates sorted by usefulness and set point/box to the best one.',
+      'Include candidates whenever there is any ambiguity. Each candidate should have label, targetKind, matchType, confidence, box, point, reason.',
+      'If the target is partially visible, still return the visible part with lower confidence.',
+      'If the user requests a target by quoted text, exact OCR match is mandatory when visible.',
+      'If the user requests an icon by meaning, do not require text; locate the most semantically matching visible icon.',
       'If several candidates exist, choose the one most likely to satisfy the user request now; include lower confidence instead of refusing.',
       'Only return found=false when no related visible text, icon, or UI candidate exists in the screenshot.',
       'Output one JSON object only. No Markdown.',
@@ -624,8 +664,11 @@ export class ScreenAnalyzer {
       `User request: ${userMessage}`,
       `Screenshot size: ${frame.imageSize.width}x${frame.imageSize.height}`,
       'Coordinate rules: origin is the screenshot top-left corner, x grows right, y grows down.',
-      'Read visible text carefully. Text is as important as icons and pictures.',
+      'Ignore any Project-Ze desktop pet, companion bubble, guide panel, or controls such as 我完成了 / 重新识别 / 退出 if they appear in the screenshot.',
+      'Read visible text carefully. Chinese text, English text, button words, placeholders, and labels are as important as icons and pictures.',
+      'For 汉语词条/文字/字样, point to the text itself. For 图标/logo/图案, point to the visual object itself. For buttons/links/inputs, point to the full clickable control.',
       'Consider exact text, partial text, Chinese/English equivalents, icon meaning, nearby labels, placeholders, tabs, and window title context.',
+      'For download/install flows, look for Download, 下载, Get, Install, 安装, Windows, Client, official, 官网, setup, installer, .exe, .msi.',
       'If the exact target is not visible but a related next-step candidate is visible, return that best candidate with confidence between 0.35 and 0.70.',
       'If there are multiple plausible candidates, rank them in candidates and set point/box to the best one.',
       'Use found=true whenever there is a visible candidate worth pointing at. Use found=false only when the screenshot contains nothing related.',
@@ -642,7 +685,9 @@ export class ScreenAnalyzer {
       `User request: ${userMessage}`,
       `Screenshot size: ${frame.imageSize.width}x${frame.imageSize.height}`,
       'Coordinate rules: point must be screenshot pixel coordinates, origin top-left, x right, y down.',
-      'Read visible text first, then inspect icons and UI shapes. Button/link/input text and nearby labels are important.',
+      'Ignore any Project-Ze desktop pet, companion bubble, guide panel, or controls such as 我完成了 / 重新识别 / 退出 if they appear in the screenshot.',
+      'Read visible Chinese/English text first, then inspect icons and UI shapes. Button/link/input text and nearby labels are important.',
+      'For text targets, point to the text itself. For icon targets, point to the icon itself. For clickable controls, point to the whole control.',
       'Return a useful visible candidate when possible. Use lower confidence for partial/uncertain matches instead of refusing.',
       'Return found=false only when no related visible candidate exists.',
       'Output one JSON object only. No Markdown.',
@@ -670,11 +715,27 @@ export class ScreenAnalyzer {
       const targetKind = this.parseText(payload.targetKind ?? payload.kind ?? parsed.targetKind ?? parsed.kind);
       const matchType = this.parseText(payload.matchType ?? payload.match ?? parsed.matchType ?? parsed.match);
       const box = this.parseBox(
-        payload.box ?? payload.bbox ?? payload.boundingBox ?? payload.bounds ?? payload.region,
+        payload.box ??
+          payload.bbox ??
+          payload.box_2d ??
+          payload.bbox_2d ??
+          payload.boundingBox ??
+          payload.bounding_box ??
+          payload.bounds ??
+          payload.region ??
+          payload.rect ??
+          payload.rectangle ??
+          payload.area ??
+          payload.location,
         frame
       );
       const point = this.parsePoint(
-        payload.point ?? payload.center ?? payload.coordinate ?? payload.coordinates,
+        payload.point ??
+          payload.center ??
+          payload.coordinate ??
+          payload.coordinates ??
+          payload.position ??
+          payload.location,
         frame
       ) ?? this.centerOfBox(box);
       const locateResult = {
@@ -703,7 +764,12 @@ export class ScreenAnalyzer {
 
     const sortedCandidates = candidates
       .slice()
-      .sort((a: any, b: any) => this.parseConfidence(b.confidence) - this.parseConfidence(a.confidence));
+      .sort((a: any, b: any) => {
+        const aHasLocation = this.hasRawLocation(a) ? 1 : 0;
+        const bHasLocation = this.hasRawLocation(b) ? 1 : 0;
+        if (aHasLocation !== bHasLocation) return bHasLocation - aHasLocation;
+        return this.parseConfidence(b.confidence) - this.parseConfidence(a.confidence);
+      });
     const topCandidate = sortedCandidates[0];
     const parsedHasLocation = this.hasRawLocation(parsed);
     if (parsedHasLocation && parsed.found !== false) return parsed;
@@ -722,7 +788,25 @@ export class ScreenAnalyzer {
 
   private hasRawLocation(value: any): boolean {
     if (!value || typeof value !== 'object') return false;
-    return !!(value.point || value.center || value.coordinate || value.coordinates || value.box || value.bbox || value.boundingBox || value.bounds || value.region);
+    return !!(
+      value.point ||
+      value.center ||
+      value.coordinate ||
+      value.coordinates ||
+      value.position ||
+      value.box ||
+      value.bbox ||
+      value.box_2d ||
+      value.bbox_2d ||
+      value.boundingBox ||
+      value.bounding_box ||
+      value.bounds ||
+      value.region ||
+      value.rect ||
+      value.rectangle ||
+      value.area ||
+      value.location
+    );
   }
 
   private parseConfidence(value: any): number {
@@ -743,6 +827,12 @@ export class ScreenAnalyzer {
     const x = Number(value.x ?? value.left ?? value.cx ?? value.centerX);
     const y = Number(value.y ?? value.top ?? value.cy ?? value.centerY);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+    if (isNormalizedCoordinate(x) && isNormalizedCoordinate(y)) {
+      return {
+        x: Math.round(x * frame.imageSize.width),
+        y: Math.round(y * frame.imageSize.height),
+      };
+    }
     if (x < 0 || y < 0 || x > frame.imageSize.width || y > frame.imageSize.height) return undefined;
     return { x: Math.round(x), y: Math.round(y) };
   }
@@ -750,10 +840,29 @@ export class ScreenAnalyzer {
   private parseBox(value: any, frame: ScreenCaptureFrame): ScreenTargetBox | undefined {
     if (!value) return undefined;
     if (Array.isArray(value) && value.length >= 4) {
-      const left = Number(value[0]);
-      const top = Number(value[1]);
-      const right = Number(value[2]);
-      const bottom = Number(value[3]);
+      const values = value.slice(0, 4).map(Number);
+      if (values.every(Number.isFinite) && values.every(isNormalizedCoordinate)) {
+        const [a, b, c, d] = values;
+        if (c > a && d > b) {
+          return this.parseBox({
+            left: a * frame.imageSize.width,
+            top: b * frame.imageSize.height,
+            right: c * frame.imageSize.width,
+            bottom: d * frame.imageSize.height,
+          }, frame);
+        }
+        return this.parseBox({
+          x: a * frame.imageSize.width,
+          y: b * frame.imageSize.height,
+          width: c * frame.imageSize.width,
+          height: d * frame.imageSize.height,
+        }, frame);
+      }
+
+      const left = values[0];
+      const top = values[1];
+      const right = values[2];
+      const bottom = values[3];
       if (
         Number.isFinite(left) &&
         Number.isFinite(top) &&
@@ -773,8 +882,8 @@ export class ScreenAnalyzer {
     const rawY = Number(value.y ?? value.top ?? value.y1);
     const rightValue = value.right ?? value.x2;
     const bottomValue = value.bottom ?? value.y2;
-    const rawWidth = Number(value.width ?? value.w ?? (rightValue !== undefined ? Number(rightValue) - rawX : undefined));
-    const rawHeight = Number(value.height ?? value.h ?? (bottomValue !== undefined ? Number(bottomValue) - rawY : undefined));
+    let rawWidth = Number(value.width ?? value.w ?? (rightValue !== undefined ? Number(rightValue) - rawX : undefined));
+    let rawHeight = Number(value.height ?? value.h ?? (bottomValue !== undefined ? Number(bottomValue) - rawY : undefined));
     if (
       !Number.isFinite(rawX) ||
       !Number.isFinite(rawY) ||
@@ -786,10 +895,24 @@ export class ScreenAnalyzer {
       return undefined;
     }
 
-    const left = clamp(rawX, 0, frame.imageSize.width);
-    const top = clamp(rawY, 0, frame.imageSize.height);
-    const right = clamp(rawX + rawWidth, 0, frame.imageSize.width);
-    const bottom = clamp(rawY + rawHeight, 0, frame.imageSize.height);
+    let x = rawX;
+    let y = rawY;
+    if (
+      isNormalizedCoordinate(rawX) &&
+      isNormalizedCoordinate(rawY) &&
+      isNormalizedCoordinate(rawWidth) &&
+      isNormalizedCoordinate(rawHeight)
+    ) {
+      x = rawX * frame.imageSize.width;
+      y = rawY * frame.imageSize.height;
+      rawWidth = rawWidth * frame.imageSize.width;
+      rawHeight = rawHeight * frame.imageSize.height;
+    }
+
+    const left = clamp(x, 0, frame.imageSize.width);
+    const top = clamp(y, 0, frame.imageSize.height);
+    const right = clamp(x + rawWidth, 0, frame.imageSize.width);
+    const bottom = clamp(y + rawHeight, 0, frame.imageSize.height);
     if (right <= left || bottom <= top) return undefined;
 
     return {
@@ -887,6 +1010,10 @@ function resolveCaptureThumbnailSize(
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function isNormalizedCoordinate(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
 function resolveCropZoomScale(cropBox: ScreenTargetBox): number {

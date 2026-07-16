@@ -404,11 +404,17 @@ export class OperationGuideManager {
 
   private buildTargetDescription(step: OperationGuideStep): string {
     return [
+      '这是分步操作指引的目标定位请求。只定位用户正在操作的真实应用/网页界面。',
+      '不要定位 Project-Ze 桌宠、气泡、指引面板、我完成了、重新识别、退出按钮或提示框里的文字。',
       `当前操作类型：${step.action}`,
-      `目标界面元素：${step.target}`,
-      `用户要完成的动作：${step.instruction}`,
+      `必须定位的目标界面元素：${step.target}`,
+      `用户要完成的动作提示：${step.instruction}`,
       step.expectedChange ? `完成后的界面变化：${step.expectedChange}` : '',
-      '请定位当前屏幕上最匹配的唯一目标控件。',
+      '如果目标是中文词条/文字/字样，请找屏幕上完全匹配或最接近的可见文字。',
+      '如果目标是图标/logo/图案，请找图形本体；附近文字只用于判断是哪一个。',
+      '如果目标是按钮/链接/菜单/输入框，请找整个可点击控件，不要只找按钮上的几个字。',
+      '如果是下载/安装步骤，重点寻找 Download、下载、Get、Install、安装、Windows、Client、setup、installer、.exe、.msi、官方下载等可见控件。',
+      '请定位当前屏幕上最匹配的唯一目标控件；如果不确定，也返回最有用的候选位置。',
     ].filter(Boolean).join('\n');
   }
 
