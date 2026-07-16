@@ -63,6 +63,7 @@ src/
 - `screen-target-pointer.ts`：屏幕目标指示编排器，仅处理 `.` 显式屏幕分析中的“指出/在哪/帮我找”等请求，负责 Vision 定位结果校验、截图坐标映射、八方向 point 指向姿态选择、指向锚点换算、移动调用、屏幕变化取消和指向气泡；移动前会对 Vision 前后两帧 `ScreenCaptureFrame.fingerprint` 做一次保守 diff，diff 阈值为 `0.20`，明显变化时取消旧坐标。
 - `operation-guide-config.ts`：分步指引独立运行态配置，保存到 Electron `userData/config/operation-guide-config.json`，包含启用开关、联网搜索开关、API Key、API 地址、模型、温度和提示词。
 - `operation-guide-intent.ts`：分步指引自然语言入口解析，负责识别“我想下载 Steam，下一步怎么做”“怎么下载 Codex”“我完成了”“重新识别”等用户意图。
+- `operation-guide-progress-evaluator.ts`：分步指引的屏幕进度判断器；页面变化后用轻量 Vision JSON 判断当前步骤是否完成、下一步目标是否出现，避免只会重复指当前步骤。
 - `operation-guide-search.ts`：分步指引的联网教程检索边界，按目标软件收集官方文档、技术博客和社区教程片段。
 - `operation-guide-planner.ts`：教程结构化解析器，把搜索结果整理成单动作、短提示、可定位目标控件的步骤队列；无 API 或失败时回退到通用 Windows 安装步骤。
 - `operation-guide-manager.ts`：分步指引中台，维护当前教程进度，融合步骤和屏幕定位结果，调用 `ScreenTargetPointer` 让桌宠移动并指向目标；页面滚动/跳转时重新识别当前步骤，不自动跳到下一步。

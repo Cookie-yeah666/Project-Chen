@@ -36,7 +36,7 @@ Desktop Companion → AI Companion → Embodied Agent → Physical Robot
 | Memory System | 对话摘要 + 轻量生活习惯记忆 | ✔ |
 | TTS Voice | GPT-SoVITS / MiMo / 阿里云 / OpenAI | ✔ |
 | Screen Analysis | Vision API 截屏分析 | ✔ |
-| Operation Guide | 桌宠移动 + 指向动画 + 气泡文字的分步软件安装指引 | V1.1 |
+| Operation Guide | 桌宠移动 + 指向动画 + 气泡文字的分步软件安装指引，支持屏幕变化后的进度判断 | V1.2 |
 | Voice Input (ASR) | 麦克风按钮 + 长按快捷键，支持 OpenAI / 阿里百炼 / 自定义 OpenAI-compatible 预设 | ✔ |
 | Relationship | 好感度 + 熟悉度系统 | ✔ |
 | Activity Monitor | 窗口标题感知 | ✔ |

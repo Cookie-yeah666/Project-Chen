@@ -24,6 +24,18 @@ export interface ScreenCaptureOptions {
   highPrecision?: boolean;
 }
 
+export interface ScreenVisionQueryOptions extends ScreenCaptureOptions {
+  visionImageDetail?: 'low' | 'high';
+  visionSystemPrompt?: string;
+  visionRequestTimeoutMs?: number;
+  visionMaxTokens?: number;
+}
+
+export interface ScreenVisionQueryResponse {
+  text: string;
+  frame: ScreenCaptureFrame;
+}
+
 export interface ScreenTargetBox {
   x: number;
   y: number;
@@ -78,6 +90,32 @@ export class ScreenAnalyzer {
   async captureScreen(): Promise<string | null> {
     const frame = await this.captureScreenFrame();
     return frame?.imageDataUri ?? null;
+  }
+
+  /** 截图并用自定义提示词询问 Vision，供上层模块做结构化屏幕判断。 */
+  async queryScreen(
+    userMessage: string,
+    options: ScreenVisionQueryOptions = {}
+  ): Promise<ScreenVisionQueryResponse> {
+    const config = this.configManager.get();
+    if (!config.visionApiKey || !config.visionBaseURL || !config.visionModel) {
+      throw new Error('屏幕分析未配置，请在设置中配置 Vision API');
+    }
+
+    const frame = await this.captureScreenFrame({ highPrecision: options.highPrecision });
+    if (!frame) {
+      throw new Error('截屏失败');
+    }
+
+    const text = await this.callVisionAPI(frame.imageDataUri, userMessage, {
+      ...config,
+      visionSystemPrompt: options.visionSystemPrompt,
+      visionImageDetail: options.visionImageDetail,
+      visionRequestTimeoutMs: options.visionRequestTimeoutMs,
+      visionMaxTokens: options.visionMaxTokens,
+    });
+
+    return { text, frame };
   }
 
   /** 截取主屏幕并返回坐标映射所需元信息 */

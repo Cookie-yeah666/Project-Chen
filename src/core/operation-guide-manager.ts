@@ -8,6 +8,10 @@ import {
 import { ScreenAnalyzer, ScreenCaptureFrame } from './screen-analyzer';
 import { ScreenTargetPointer } from './screen-target-pointer';
 import { OperationGuidePlanner } from './operation-guide-planner';
+import {
+  OperationGuideProgressEvaluation,
+  OperationGuideProgressEvaluator,
+} from './operation-guide-progress-evaluator';
 import { OperationGuideSearchService } from './operation-guide-search';
 import {
   extractOperationGuideSoftwareName,
@@ -28,9 +32,11 @@ interface OperationGuideManagerOptions {
   bubbleOrchestrator: BubbleOrchestrator;
 }
 
-const SCREEN_CHANGE_POLL_MS = 1800;
-const SCREEN_CHANGE_STABLE_DELAY_MS = 1200;
-const SCREEN_CHANGE_STABILITY_RECHECK_MS = 450;
+const SCREEN_CHANGE_POLL_MS = 900;
+const SCREEN_CHANGE_STABLE_DELAY_MS = 600;
+const SCREEN_CHANGE_STABILITY_RECHECK_MS = 260;
+const STEP_COMPLETE_CONFIDENCE_THRESHOLD = 0.72;
+const NEXT_TARGET_VISIBLE_CONFIDENCE_THRESHOLD = 0.78;
 
 export class OperationGuideManager {
   private mainWindow: BrowserWindow;
@@ -40,6 +46,7 @@ export class OperationGuideManager {
   private configManager: OperationGuideConfigManager;
   private searchService = new OperationGuideSearchService();
   private planner: OperationGuidePlanner;
+  private progressEvaluator: OperationGuideProgressEvaluator;
   private plan: OperationGuidePlan | null = null;
   private status: OperationGuideStatus = 'idle';
   private currentIndex = 0;
@@ -58,6 +65,7 @@ export class OperationGuideManager {
     this.bubbleOrchestrator = options.bubbleOrchestrator;
     this.configManager = options.configManager;
     this.planner = new OperationGuidePlanner(options.configManager);
+    this.progressEvaluator = new OperationGuideProgressEvaluator(options.screenAnalyzer);
   }
 
   isActive(): boolean {
@@ -267,7 +275,7 @@ export class OperationGuideManager {
 
           this.clearScreenWatchInterval();
           this.screenWatcherBase = null;
-          this.message = '页面变化了，停稳后我重新对准当前这一步。';
+          this.message = '页面变化了，我判断一下你是不是完成了这一步。';
           this.showBubble(this.message);
           this.emitState();
           this.scheduleScreenRelocate(sessionId);
@@ -301,7 +309,51 @@ export class OperationGuideManager {
       return;
     }
 
+    const advanced = await this.tryAdvanceAfterScreenChange(sessionId);
+    if (advanced) return;
+
     await this.runCurrentStep(sessionId, 'screen-changed');
+  }
+
+  private async tryAdvanceAfterScreenChange(sessionId: number): Promise<boolean> {
+    if (!this.plan || !this.isCurrent(sessionId)) return true;
+    const currentStep = this.getCurrentStep();
+    if (!currentStep) return false;
+
+    try {
+      this.message = '我在看当前界面，判断这一步做完没有。';
+      this.emitState();
+      const evaluation = await this.progressEvaluator.evaluate({
+        softwareName: this.plan.softwareName,
+        currentStep,
+        nextStep: this.plan.steps[this.currentIndex + 1],
+      });
+      if (!this.isCurrent(sessionId)) return true;
+
+      if (this.shouldAutoAdvance(evaluation)) {
+        this.message = evaluation.currentStage
+          ? `我看到你已经到「${evaluation.currentStage}」了，进入下一步。`
+          : '我看到这一步完成了，进入下一步。';
+        this.showBubble('我看到这一步完成了，去下一步。');
+        this.emitState();
+        await this.next('screen-changed');
+        return true;
+      }
+
+      if (evaluation.currentStage) {
+        this.message = `我看到：${evaluation.currentStage}。继续对准当前这一步。`;
+        this.emitState();
+      }
+    } catch (error: any) {
+      console.warn('[OperationGuideManager] progress evaluation failed:', error?.message || error);
+    }
+
+    return false;
+  }
+
+  private shouldAutoAdvance(evaluation: OperationGuideProgressEvaluation): boolean {
+    if (evaluation.completed && evaluation.confidence >= STEP_COMPLETE_CONFIDENCE_THRESHOLD) return true;
+    return evaluation.nextTargetVisible && evaluation.confidence >= NEXT_TARGET_VISIBLE_CONFIDENCE_THRESHOLD;
   }
 
   private async isScreenStableForRelocate(sessionId: number): Promise<boolean> {

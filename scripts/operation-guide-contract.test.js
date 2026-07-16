@@ -7,6 +7,9 @@ const {
   extractOperationGuideSoftwareName,
   getOperationGuideControlCommand,
 } = require('../dist/core/operation-guide-intent');
+const {
+  parseProgressEvaluation,
+} = require('../dist/core/operation-guide-progress-evaluator');
 
 function testParseGuidePlanFromJsonEnvelope() {
   const raw = [
@@ -72,10 +75,23 @@ function testGuideControlCommands() {
   assert.strictEqual(getOperationGuideControlCommand('我想下载 Steam'), null);
 }
 
+function testParseProgressEvaluation() {
+  const result = parseProgressEvaluation('JSON:\n{"completed":true,"confidence":0.83,"currentStage":"搜索结果页","nextTargetVisible":true,"reason":"已看到官网结果"}');
+  assert.strictEqual(result.completed, true);
+  assert.strictEqual(result.confidence, 0.83);
+  assert.strictEqual(result.currentStage, '搜索结果页');
+  assert.strictEqual(result.nextTargetVisible, true);
+
+  const fallback = parseProgressEvaluation('not json');
+  assert.strictEqual(fallback.completed, false);
+  assert.strictEqual(fallback.confidence, 0);
+}
+
 testParseGuidePlanFromJsonEnvelope();
 testParseGuidePlanFallsBackForInvalidJson();
 testFallbackPlanUsesSoftwareNameInBeginnerSteps();
 testNaturalGuideIntentStartsGuide();
 testGuideControlCommands();
+testParseProgressEvaluation();
 
 console.log('operation-guide-contract tests passed');
