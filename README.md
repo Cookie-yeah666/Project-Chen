@@ -5,143 +5,355 @@
 <h1 align="center">Project-Ze</h1>
 
 <p align="center">
-  <strong>An open-source desktop AI companion powered by LLM</strong>
+  <strong>MIDL Version · AI 桌宠分步操作指引助手</strong>
   <br />
-  一个基于大语言模型的桌面 AI 伙伴
+  基于屏幕全域感知、互联网教程解析和虚拟桌宠指向动画的交互式操作引导系统
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Electron-42.2-blue" alt="Electron" />
   <img src="https://img.shields.io/badge/TypeScript-6.0-brightgreen" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
+  <img src="https://img.shields.io/badge/Platform-Windows-informational" alt="Windows" />
+  <img src="https://img.shields.io/badge/Version-MIDL%20version-orange" alt="MIDL version" />
 </p>
 
 ---
 
-## Vision
+## 项目简介
 
+Project-Ze 是一个运行在 Windows 桌面上的 AI 虚拟桌宠。当前 MIDL version 的核心能力是 **AI 桌宠分步操作指引助手**：
+
+> 它不是给用户一篇教程，而是在用户当前屏幕上直接让桌宠移动过去，指出下一步应该点哪里。
+
+系统面向计算机零基础用户，解决软件下载、安装、注册、配置流程复杂的问题。用户只需要告诉桌宠目标，例如“我想下载 Steam”，系统会自动整理教程、观察屏幕、判断当前步骤，并控制桌宠移动到目标控件旁边，通过八方向指向动画和气泡提示引导用户完成操作。
+
+## 核心亮点
+
+| 能力 | 说明 |
+|------|------|
+| 桌宠具身指引 | 不绘制红圈、矩形或额外箭头，所有可视化引导都由桌宠移动、指向动画和气泡完成 |
+| 屏幕实时感知 | 捕获当前屏幕，调用 Vision 模型识别文字、按钮、输入框、图标、菜单和弹窗 |
+| 教程结构化解析 | 根据目标软件检索教程，并整理成单步动作队列 |
+| 单目标引导 | 每次只给用户一个当前操作目标，降低新手理解成本 |
+| 高精度指向 | 使用八方向指尖校准、截图坐标映射、局部裁剪放大复核提升定位精度 |
+| 页面变化处理 | 页面跳转、滚动、弹窗或加载后重新识别，不盲目沿用旧坐标 |
+| 可交互指引面板 | 提供“我完成了 / 重新识别 / 退出”，网址提示可点击复制到剪贴板 |
+| 绿色版打包 | Windows 下可输出 `release/win-unpacked/start.exe`，解压即可运行 |
+
+## 当前版本能力
+
+### 1. AI 桌宠分步操作指引
+
+用户在 F11 设置中启用分步指引并填写 API 信息后，可以输入目标软件或目标任务，例如：
+
+- 我想下载 Steam
+- 帮我安装 Claude 客户端
+- 怎么找到 Codex 下载入口
+- 下一步应该点哪里
+
+系统执行流程：
+
+1. 根据用户目标检索或生成安装教程。
+2. 将教程解析成结构化步骤队列。
+3. 截取当前屏幕并识别可交互控件。
+4. 判断用户当前处于哪一步。
+5. 输出当前唯一目标控件坐标。
+6. 桌宠移动到目标附近，播放指向动画。
+7. 气泡给出短提示，例如“点击右上角的安装按钮”。
+8. 用户完成后点击“我完成了”或“重新识别”，系统进入下一轮。
+
+### 2. 屏幕目标指示
+
+普通对话中也可以让桌宠帮你找屏幕上的目标。典型输入：
+
+```txt
+. 帮我指出下载按钮在哪里
+. 搜索框在哪
+. 指一下设置图标
+. 找到页面里的 Install Steam
 ```
-Desktop Companion → AI Companion → Embodied Agent → Physical Robot
+
+系统会优先识别：
+
+- 文本位置：标题、链接、按钮文字、输入框占位文字
+- 图案位置：图标、Logo、常见符号
+- 控件位置：按钮、输入框、菜单、标签页、复选框
+- 上下文位置：文字旁边的相关按钮或图标
+
+### 3. 算法 3：局部裁剪放大复核
+
+为了提高小文字、小图标、小按钮的定位精度，当前版本加入了 Algorithm 3：
+
+```txt
+全屏高精度定位
+    ↓
+得到候选目标框
+    ↓
+裁剪候选附近区域
+    ↓
+局部放大
+    ↓
+Vision 二次确认文字/图标/控件边界
+    ↓
+局部坐标映射回全屏
+    ↓
+桌宠指尖对准最终目标点
 ```
 
-从桌面开始，逐步走向具身智能。
+核心坐标映射公式：
 
-## Features
+```txt
+screenX = origin.x + imageX * screenWidth / imageWidth
+screenY = origin.y + imageY * screenHeight / imageHeight
+```
 
-| 功能 | 说明 | 状态 |
-|------|------|------|
-| 8 State Animation | 空闲/好奇/拖拽/犯困/睡觉/孤独/舒适/疲惫 | ✔ |
-| Emotion System | 动态情绪权重 0~100 | ✔ |
-| AI Chat (LLM) | OpenAI 兼容 API | ✔ |
-| Memory System | 对话摘要 + 轻量生活习惯记忆 | ✔ |
-| TTS Voice | GPT-SoVITS / MiMo / 阿里云 / OpenAI | ✔ |
-| Screen Analysis | Vision API 截屏分析 | ✔ |
-| Operation Guide | 桌宠移动 + 指向动画 + 气泡文字的分步软件安装指引，支持屏幕变化后的进度判断 | V1.2 |
-| Voice Input (ASR) | 麦克风按钮 + 长按快捷键，支持 OpenAI / 阿里百炼 / 自定义 OpenAI-compatible 预设 | ✔ |
-| Relationship | 好感度 + 熟悉度系统 | ✔ |
-| Activity Monitor | 窗口标题感知 | ✔ |
-| Contextual Proactive Reactions | 配置化的工作/休息切换与长专注轻柔回应 | ✔ |
-| Debug Window | F3 调试面板，含日志/关系/记忆快照 | ✔ |
+局部裁剪坐标映射：
 
-## Quick Start
+```txt
+fullImageX = cropBox.x + cropLocalX / zoomScale
+fullImageY = cropBox.y + cropLocalY / zoomScale
+```
+
+指尖对准目标的窗口位置计算：
+
+```txt
+windowX = targetX - fingertipOffsetX
+windowY = targetY - fingertipOffsetY
+```
+
+然后根据屏幕工作区进行 clamp，保证桌宠窗口不会跑出屏幕。
+
+## 系统架构
+
+```txt
+用户目标
+  ↓
+Operation Guide Intent
+  ↓
+教程检索 / 教程结构化解析
+  ↓
+结构化步骤队列
+  ↓
+Screen Analyzer 屏幕感知
+  ↓
+Guide Manager 指引中台
+  ↓
+Screen Target Pointer 目标指向编排
+  ↓
+Move Controller 桌宠移动
+  ↓
+Renderer 桌宠动画 / 指向 / 气泡 / 指引面板
+```
+
+核心模块：
+
+| 模块 | 责任 |
+|------|------|
+| `src/core/operation-guide-manager.ts` | 分步指引中台，维护教程进度并调度屏幕定位和桌宠指向 |
+| `src/core/operation-guide-planner.ts` | 将教程或目标任务整理成结构化步骤 |
+| `src/core/operation-guide-search.ts` | 联网教程检索边界 |
+| `src/core/operation-guide-progress-evaluator.ts` | 判断当前步骤是否完成、下一步目标是否出现 |
+| `src/core/screen-analyzer.ts` | 屏幕截图、Vision 调用、OCR/控件/图标目标定位、算法 3 复核 |
+| `src/core/screen-target-pointer.ts` | 判断是否需要指向、选择目标、调用移动和指向动画 |
+| `src/core/screen-target-alignment.ts` | 八方向指尖坐标校准和最佳指向姿态选择 |
+| `src/core/move-controller.ts` | 桌宠平滑移动、坐标 clamp、移动动画事件 |
+| `src/renderer/renderer.ts` | 桌宠动画、气泡、指引面板、网址点击复制 |
+| `src/main/main.ts` | Electron 主进程、窗口、IPC、模块初始化 |
+
+## 对外融合接口建议
+
+如果要和其他小组融合，建议把分步指引封装成高层 API，其他组只调用接口，不直接改内部实现。
+
+### 高层指引接口
+
+```ts
+interface GuideStartRequest {
+  goal: string;
+  source?: 'text' | 'voice' | 'demo' | 'external';
+  preferredLanguage?: 'zh-CN' | 'en-US';
+}
+
+interface GuideState {
+  sessionId: string;
+  active: boolean;
+  status: 'planning' | 'observing' | 'pointing' | 'waiting' | 'completed' | 'error';
+  goal: string;
+  currentIndex: number;
+  totalSteps: number;
+  message: string;
+  canNext: boolean;
+  canReidentify: boolean;
+  canExit: boolean;
+}
+
+interface GuideApi {
+  start(request: GuideStartRequest): Promise<GuideState>;
+  next(sessionId: string): Promise<GuideState>;
+  reidentify(sessionId: string): Promise<GuideState>;
+  exit(sessionId: string): Promise<GuideState>;
+  getState(sessionId: string): Promise<GuideState>;
+}
+```
+
+### 桌宠行为指令
+
+```ts
+interface PetGuideCommand {
+  type: 'point_to_target';
+  target: {
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    label?: string;
+    kind?: 'text' | 'button' | 'input' | 'icon' | 'menu' | 'region';
+  };
+  action: 'click' | 'input' | 'scroll' | 'wait';
+  hint: string;
+  confidence: number;
+}
+```
+
+这样语音组、摄像头组、网页检索组都可以独立接入：
+
+- 语音组负责把语音转成 `goal` 或 `next/reidentify/exit` 指令。
+- 摄像头组负责提供用户状态，例如“长时间找不到目标”。
+- 教程组负责提供更高质量的步骤队列。
+- 桌宠组只消费 `PetGuideCommand`，不需要知道教程来源。
+
+## 使用方法
+
+### 开发运行
 
 ```bash
-git clone https://github.com/enz233/Project-Ze.git
+git clone https://github.com/Cookie-yeah666/Project-Chen.git Project-Ze
 cd Project-Ze
 npm install
 npm start
 ```
 
-### Configure AI (Optional)
+### 快捷键
 
-F11 → 设置 → 填写 API Key → 测试连接
-
-支持 DeepSeek、OpenAI、硅基流动、Moonshot、智谱、通义千问。
-
-## Usage
-
-| 操作 | 效果 |
+| 操作 | 作用 |
 |------|------|
-| 鼠标靠近 | 好奇 |
-| 左键拖拽 | 移动 |
-| 右键 | 聊天输入 |
-| F3 | 调试窗口（日志/关系/记忆） |
-| F11 | 设置 |
-| F12 | 开发者工具 |
-| `.` 开头消息 | 截屏分析 |
-| F11 → 分步指引 | 启用 AI 桌宠分步操作指引，填写独立 API 配置并启动教程 |
-| “我想下载 Steam，下一步怎么做？” | 启动桌宠分步指引并移动到当前目标旁 |
-| 麦克风按钮 | 点击开始/结束语音输入 |
-| `Ctrl+Shift+Space` | 长按说话，松开结束 |
+| F11 | 打开设置 |
+| F3 | 打开调试窗口 |
+| F12 | 打开开发者工具 |
+| 右键桌宠 | 打开聊天输入框 |
+| 左键拖拽 | 移动桌宠 |
+| `.` 开头消息 | 显式屏幕分析 / 屏幕目标指示 |
+| 麦克风按钮 | 开始或结束语音输入 |
+| `Ctrl+Shift+Space` | 长按语音输入 |
 
-ASR 供应商在 F11 设置的“语音输入”页配置。当前内置 OpenAI、阿里百炼 / DashScope、自定义 OpenAI-compatible 三个预设；阿里百炼预设复用 OpenAI-compatible ASR 引擎，需填写 DashScope API Key 和兼容 ASR 模型。
+### AI 配置
 
-分步指引路线图见 [docs/challenge-cup-operation-guide-roadmap.md](docs/challenge-cup-operation-guide-roadmap.md)。V1 使用屏幕实时感知和互联网教程解析，让桌宠自己移动到目标控件旁并播放指向动画；V2/V3 预留语音交互和摄像头多模态行为感知。
+进入 F11 设置后，可以配置：
 
-## Architecture
+- 通用聊天模型 API
+- 屏幕分析 Vision API
+- 分步指引独立 API
+- 语音输入 ASR API
+- TTS 语音合成 API
+- 桌宠大小、透明度等外观参数
+
+分步指引支持独立配置 API Key、API 地址、模型、温度和提示词，方便与普通聊天能力解耦。
+
+## Windows 打包
+
+```bash
+npm run dist:win
+```
+
+输出目录：
 
 ```txt
-Renderer (Sprites + Animation + Bubble)
-    ↕ IPC
-Main Process
-    ├─ StateManager / TransitionEngine       状态管理与转移
-    ├─ EmotionSystem                         情绪权重
-    ├─ ChatManager / AIMemory                对话、摘要、关系与习惯记忆
-    │   └─ ChatHistoryStore                  聊天历史持久化边界
-    ├─ ObserverManager                       观察编排
-    │   └─ ContextCollector → ProactiveReactionSystem → MicroBehaviorManager
-    │       → BubbleOrchestrator → BubbleManager
-    ├─ TTSManager → createTTSEngine(config)  语音播放、字幕、停止与供应商合成
-    ├─ ScreenAnalyzer                        显式屏幕分析服务
-    └─ JsonConfigStore<T>                    运行态 JSON 配置读写
+release/win-unpacked/
 ```
 
-Renderer 动画和气泡 timeout 使用 generation guard 防止旧回调覆盖新状态；完整模块索引见 [PROJECT_INDEX.md](PROJECT_INDEX.md)。
+绿色版启动入口：
 
-## Roadmap
-
-**v0.1** — Foundation
-- [x] Window & Skeleton
-- [x] 8 State Animation
-- [x] Drag & Interaction
-
-**v0.2** — Intelligence *(current)*
-- [x] AI Chat
-- [x] TTS Voice
-- [x] Emotion System
-- [x] Memory & Summary
-- [x] Lightweight Interaction Memory
-- [x] Contextual Proactive Reactions
-- [x] Screen Analysis
-- [x] Relationship System
-
-**v0.3** — Interactive
-- [ ] Long-term Memory (RAG, later)
-- [x] Voice Input (ASR)
-- [ ] Custom Sprites
-- [ ] Plugins
-
-**Future**
-- [ ] Mobile Companion
-- [ ] Robot Platform
-
-## Project Structure
-
-主动回应部件说明见 [docs/proactive-reaction-component.md](docs/proactive-reaction-component.md)。
-
+```txt
+release/win-unpacked/start.exe
 ```
-Project-Ze/
-├── src/
-│   ├── core/          核心逻辑
-│   ├── main/          Electron 主进程
-│   ├── renderer/      渲染进程
-│   ├── config/        配置
-│   └── assets/        资源
-├── docs/              设计与开发说明
-├── README.md
-└── package.json
+
+`start.exe` 是 Windows 启动器，会清理异常环境变量后拉起 `Project-Ze.exe`，降低双击无反应和安装器场景下被压到后台的概率。
+
+## 测试
+
+```bash
+npm test
+```
+
+当前契约测试覆盖：
+
+- 语音输入链路
+- 屏幕 fingerprint
+- 指尖坐标对齐
+- 屏幕目标定位 JSON 解析
+- 算法 3 裁剪复核坐标映射
+- 分步指引流程
+
+## 版本路线
+
+### V1.0 / 当前落地版本
+
+- 屏幕实时感知
+- 教程结构化解析
+- 桌宠移动到目标控件旁
+- 八方向指向动画
+- 气泡短提示
+- 每次只指引一个目标
+- 用户可选择“我完成了 / 重新识别 / 退出”
+
+### V2.0 / 语音交互
+
+- 用户通过麦克风发起指引
+- 语音确认下一步
+- 桌宠语音播报操作提示
+
+### V3.0 / 摄像头多模态行为感知
+
+- 检测用户长时间找不到目标
+- 反复误操作时加强提示
+- 结合屏幕状态和用户状态进行容错
+
+## 设计边界
+
+当前版本刻意不做：
+
+- 自动点击用户电脑
+- 自动输入敏感信息
+- 顶层悬浮红圈或矩形标注
+- 摄像头默认开启
+- 麦克风默认开启
+- 后台高频截屏监控
+
+项目原则是：**桌宠给出清晰指引，最终操作始终由用户完成。**
+
+## 项目文档
+
+- [项目索引](PROJECT_INDEX.md)
+- [开发规则](PROJECT_RULE.md)
+- [版本记录](VERSION.md)
+- [分步指引路线图](docs/challenge-cup-operation-guide-roadmap.md)
+- [配置安全说明](docs/configuration-security.md)
+- [摄像头感知模块说明](docs/camera-awareness-core.md)
+
+## 仓库与版本标记
+
+当前备份仓库：
+
+```txt
+https://github.com/Cookie-yeah666/Project-Chen.git
+```
+
+重要标记：
+
+```txt
+MIDL-version-2026-07-16
+operation-guide-v1.2.7-algorithm3-guide-url-copy-2026-07-16
 ```
 
 ## License
 
-MIT
+当前项目遵循仓库内 `package.json` 标注的开源许可配置。
