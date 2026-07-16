@@ -66,6 +66,11 @@ let dragOffsetY = 0;
 let lastCursorX = 0;
 let lastCursorY = 0;
 let dragPollTimer: ReturnType<typeof setInterval> | null = null;
+let companionVisibilityTimer: ReturnType<typeof setInterval> | null = null;
+let lastTopmostRefreshAt = 0;
+
+const COMPANION_VISIBILITY_CHECK_MS = 1200;
+const COMPANION_TOPMOST_REFRESH_MS = 5000;
 
 function createWindow(): void {
   const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
@@ -90,6 +95,8 @@ function createWindow(): void {
 
   // 默认穿透，鼠标进入角色时恢复交互
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  keepCompanionWindowVisible('create');
+  startCompanionVisibilityWatchdog();
   mainWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'));
 
   // F12 打开 DevTools，F11 打开设置，F3 打开调试窗口
@@ -603,6 +610,71 @@ function stopDragPoll(): void {
   }
 }
 
+function startCompanionVisibilityWatchdog(): void {
+  if (companionVisibilityTimer) {
+    clearInterval(companionVisibilityTimer);
+    companionVisibilityTimer = null;
+  }
+  companionVisibilityTimer = setInterval(() => {
+    keepCompanionWindowVisible('watchdog');
+  }, COMPANION_VISIBILITY_CHECK_MS);
+}
+
+function stopCompanionVisibilityWatchdog(): void {
+  if (companionVisibilityTimer) {
+    clearInterval(companionVisibilityTimer);
+    companionVisibilityTimer = null;
+  }
+}
+
+function keepCompanionWindowVisible(reason: 'create' | 'watchdog' | 'activate'): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (isDragging) return;
+
+  const now = Date.now();
+  const shouldRefreshTopmost = reason !== 'watchdog' || now - lastTopmostRefreshAt >= COMPANION_TOPMOST_REFRESH_MS;
+  if (shouldRefreshTopmost) {
+    lastTopmostRefreshAt = now;
+    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    mainWindow.moveTop();
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  if (!mainWindow.isVisible()) {
+    mainWindow.showInactive();
+  }
+
+  keepMainWindowInsideVisibleDisplay();
+}
+
+function keepMainWindowInsideVisibleDisplay(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const bounds = mainWindow.getBounds();
+  const displays = screen.getAllDisplays();
+  const visible = displays.some(display => hasMeaningfulIntersection(bounds, display.workArea));
+  if (visible) return;
+
+  const display = screen.getPrimaryDisplay();
+  const workArea = display.workArea;
+  const x = Math.max(workArea.x, workArea.x + workArea.width - bounds.width - 20);
+  const y = Math.max(workArea.y, workArea.y + workArea.height - bounds.height - 20);
+  mainWindow.setPosition(Math.round(x), Math.round(y));
+}
+
+function hasMeaningfulIntersection(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number }
+): boolean {
+  const left = Math.max(a.x, b.x);
+  const top = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.width, b.x + b.width);
+  const bottom = Math.min(a.y + a.height, b.y + b.height);
+  return right - left >= 24 && bottom - top >= 24;
+}
+
 function getMainWindowPosition(): { x: number; y: number } {
   if (!mainWindow || mainWindow.isDestroyed()) return { x: 0, y: 0 };
   const [x, y] = mainWindow.getPosition();
@@ -635,6 +707,7 @@ app.on('before-quit', async () => {
 });
 
 app.on('will-quit', () => {
+  stopCompanionVisibilityWatchdog();
   globalShortcut.unregisterAll();
 });
 
@@ -646,5 +719,7 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
+    return;
   }
+  keepCompanionWindowVisible('activate');
 });
