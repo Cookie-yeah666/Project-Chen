@@ -3,6 +3,10 @@ const {
   buildFallbackPlan,
   parseGuidePlan,
 } = require('../dist/core/operation-guide-planner');
+const {
+  extractOperationGuideSoftwareName,
+  getOperationGuideControlCommand,
+} = require('../dist/core/operation-guide-intent');
 
 function testParseGuidePlanFromJsonEnvelope() {
   const raw = [
@@ -54,8 +58,24 @@ function testFallbackPlanUsesSoftwareNameInBeginnerSteps() {
   assert.ok(plan.steps.some(step => step.target.toLowerCase().includes('download')));
 }
 
+function testNaturalGuideIntentStartsGuide() {
+  assert.strictEqual(extractOperationGuideSoftwareName('我想下载 Steam，下一步怎么做？'), 'Steam');
+  assert.strictEqual(extractOperationGuideSoftwareName('怎么下载 Codex？'), 'Codex');
+  assert.strictEqual(extractOperationGuideSoftwareName('.我想安装 Claude 客户端，下一步怎么做？'), 'Claude 客户端');
+  assert.strictEqual(extractOperationGuideSoftwareName('怎么设置 VS Code'), 'VS Code');
+}
+
+function testGuideControlCommands() {
+  assert.strictEqual(getOperationGuideControlCommand('我完成了'), 'next');
+  assert.strictEqual(getOperationGuideControlCommand('重新识别'), 'reidentify');
+  assert.strictEqual(getOperationGuideControlCommand('退出教程'), 'exit');
+  assert.strictEqual(getOperationGuideControlCommand('我想下载 Steam'), null);
+}
+
 testParseGuidePlanFromJsonEnvelope();
 testParseGuidePlanFallsBackForInvalidJson();
 testFallbackPlanUsesSoftwareNameInBeginnerSteps();
+testNaturalGuideIntentStartsGuide();
+testGuideControlCommands();
 
 console.log('operation-guide-contract tests passed');

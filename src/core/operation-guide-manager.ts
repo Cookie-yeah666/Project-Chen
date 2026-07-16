@@ -10,6 +10,10 @@ import { ScreenTargetPointer } from './screen-target-pointer';
 import { OperationGuidePlanner } from './operation-guide-planner';
 import { OperationGuideSearchService } from './operation-guide-search';
 import {
+  extractOperationGuideSoftwareName,
+  getOperationGuideControlCommand,
+} from './operation-guide-intent';
+import {
   OperationGuidePlan,
   OperationGuideSnapshot,
   OperationGuideStatus,
@@ -63,17 +67,22 @@ export class OperationGuideManager {
   isGuideCommand(message: string): boolean {
     const text = message.trim();
     if (!text) return false;
-    if (this.isActive() && /^(下一步|下一个|继续|退出|结束|停止|取消教程|退出教程)$/i.test(text)) return true;
+    if (this.isActive() && getOperationGuideControlCommand(text)) return true;
     return this.extractSoftwareName(text).length > 0;
   }
 
   async handleChatCommand(message: string): Promise<string> {
     const text = message.trim();
-    if (/^(退出|结束|停止|取消教程|退出教程)$/i.test(text)) {
+    const command = getOperationGuideControlCommand(text);
+    if (command === 'exit') {
       this.exit('已退出当前指引。');
       return '已退出当前指引。';
     }
-    if (/^(下一步|下一个|继续)$/i.test(text)) {
+    if (command === 'reidentify') {
+      await this.reidentify();
+      return this.message || '已重新识别当前步骤。';
+    }
+    if (command === 'next') {
       await this.next('manual');
       return this.message || '已进入下一步。';
     }
@@ -359,23 +368,7 @@ export class OperationGuideManager {
   }
 
   private extractSoftwareName(message: string): string {
-    const normalized = message.trim();
-    const patterns = [
-      /^\/guide\s+(.+)$/i,
-      /^#guide\s+(.+)$/i,
-      /^开始指引\s*(.+)$/i,
-      /^启动指引\s*(.+)$/i,
-      /^安装指引\s*(.+)$/i,
-      /^帮我安装\s*(.+)$/i,
-      /^教我安装\s*(.+)$/i,
-      /^引导安装\s*(.+)$/i,
-      /^我要安装\s*(.+)$/i,
-    ];
-    for (const pattern of patterns) {
-      const match = normalized.match(pattern);
-      if (match?.[1]) return cleanupSoftwareName(match[1]);
-    }
-    return '';
+    return extractOperationGuideSoftwareName(message);
   }
 
   private startSession(): number {
@@ -402,12 +395,4 @@ export class OperationGuideManager {
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function cleanupSoftwareName(value: string): string {
-  return value
-    .replace(/教程|流程|客户端|软件/g, match => match === '客户端' ? match : '')
-    .replace(/[。！？!?]$/g, '')
-    .trim()
-    .slice(0, 80);
 }
