@@ -42,14 +42,15 @@
     "win": {
       "target": [
         {
-          "target": "nsis",
+          "target": "dir",
           "arch": [
             "x64"
           ]
         }
       ],
       "icon": "src/assets/icon.ico",
-      "requestedExecutionLevel": "requireAdministrator"
+      "executableName": "start",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,

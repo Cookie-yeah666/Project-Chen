@@ -1,4 +1,5 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from 'electron';
+import * as childProcess from 'child_process';
 import * as path from 'path';
 import { StateManager } from '../core/state-manager';
 import { TimeAwareness } from '../core/time-awareness';
@@ -72,6 +73,43 @@ let isAppQuitting = false;
 
 const COMPANION_VISIBILITY_CHECK_MS = 1200;
 const COMPANION_TOPMOST_REFRESH_MS = 5000;
+const WINDOWS_AUTO_ELEVATE_SKIP_ENV = 'PROJECT_ZE_SKIP_AUTO_ELEVATE';
+
+function isRunningAsWindowsAdmin(): boolean {
+  if (process.platform !== 'win32') return false;
+  try {
+    childProcess.execFileSync('net.exe', ['session'], { stdio: 'ignore', windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function escapePowerShellSingleQuoted(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function relaunchPackagedWindowsAppAsAdmin(): boolean {
+  if (process.platform !== 'win32' || !app.isPackaged) return false;
+  if (process.env[WINDOWS_AUTO_ELEVATE_SKIP_ENV] === '1') return false;
+  if (isRunningAsWindowsAdmin()) return false;
+
+  try {
+    const exePath = escapePowerShellSingleQuoted(process.execPath);
+    const command = `$env:${WINDOWS_AUTO_ELEVATE_SKIP_ENV}='1'; Start-Process -FilePath '${exePath}' -Verb RunAs`;
+    const elevated = childProcess.spawn(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command],
+      { detached: true, stdio: 'ignore', windowsHide: true }
+    );
+    elevated.unref();
+    app.quit();
+    return true;
+  } catch (error) {
+    console.warn('[Main] Failed to relaunch packaged app as administrator:', error);
+    return false;
+  }
+}
 
 function createWindow(): void {
   const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
@@ -734,6 +772,7 @@ function registerGlobalShortcuts(): void {
 
 setupIPC();
 app.whenReady().then(() => {
+  if (relaunchPackagedWindowsAppAsAdmin()) return;
   createWindow();
   registerGlobalShortcuts();
 });
