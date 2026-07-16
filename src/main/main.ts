@@ -68,6 +68,7 @@ let lastCursorY = 0;
 let dragPollTimer: ReturnType<typeof setInterval> | null = null;
 let companionVisibilityTimer: ReturnType<typeof setInterval> | null = null;
 let lastTopmostRefreshAt = 0;
+let isAppQuitting = false;
 
 const COMPANION_VISIBILITY_CHECK_MS = 1200;
 const COMPANION_TOPMOST_REFRESH_MS = 5000;
@@ -95,6 +96,7 @@ function createWindow(): void {
 
   // 默认穿透，鼠标进入角色时恢复交互
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  bindCompanionWindowRecovery(mainWindow);
   keepCompanionWindowVisible('create');
   startCompanionVisibilityWatchdog();
   mainWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'));
@@ -610,6 +612,41 @@ function stopDragPoll(): void {
   }
 }
 
+function bindCompanionWindowRecovery(window: BrowserWindow): void {
+  window.on('close', (event) => {
+    if (isAppQuitting) return;
+    event.preventDefault();
+    console.warn('[Main] Prevented unexpected companion window close.');
+    window.showInactive();
+    keepCompanionWindowVisible('recover');
+  });
+
+  window.on('hide', () => {
+    if (isAppQuitting) return;
+    setTimeout(() => {
+      if (isAppQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isVisible()) return;
+      console.warn('[Main] Companion window was hidden, restoring.');
+      mainWindow.showInactive();
+      keepCompanionWindowVisible('recover');
+    }, 250);
+  });
+
+  window.webContents.on('render-process-gone', (_event, details) => {
+    if (isAppQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+    console.error('[Main] Companion renderer gone, reloading:', details);
+    mainWindow.loadFile(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'));
+    keepCompanionWindowVisible('recover');
+  });
+
+  window.webContents.on('unresponsive', () => {
+    if (isAppQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+    console.warn('[Main] Companion renderer unresponsive, reloading.');
+    mainWindow.reload();
+    keepCompanionWindowVisible('recover');
+  });
+}
+
 function startCompanionVisibilityWatchdog(): void {
   if (companionVisibilityTimer) {
     clearInterval(companionVisibilityTimer);
@@ -627,7 +664,7 @@ function stopCompanionVisibilityWatchdog(): void {
   }
 }
 
-function keepCompanionWindowVisible(reason: 'create' | 'watchdog' | 'activate'): void {
+function keepCompanionWindowVisible(reason: 'create' | 'watchdog' | 'activate' | 'recover'): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (isDragging) return;
 
@@ -703,6 +740,7 @@ app.whenReady().then(() => {
 
 // 关闭时总结记忆
 app.on('before-quit', async () => {
+  isAppQuitting = true;
   await chatManager?.summarizeOnShutdown();
 });
 
@@ -712,8 +750,15 @@ app.on('will-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  transitionEngine?.stop();
-  app.quit();
+  if (isAppQuitting) {
+    transitionEngine?.stop();
+    app.quit();
+    return;
+  }
+  console.warn('[Main] All windows closed unexpectedly, recreating companion window.');
+  if (app.isReady()) {
+    createWindow();
+  }
 });
 
 app.on('activate', () => {

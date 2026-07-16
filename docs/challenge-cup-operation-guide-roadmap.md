@@ -80,6 +80,8 @@ V1.0 优先演示任务：
 
 已落地策略：
 
+- 开发启动脚本 `start.bat` 自动请求管理员权限。
+- Windows 打包配置声明 `requestedExecutionLevel=requireAdministrator`，打包后的桌宠以管理员权限运行。
 - 主窗口启动后定期做可见性自检。
 - 如果桌宠被隐藏、最小化或压到普通窗口后面，自动 `showInactive`、重新置顶并 `moveTop`。
 - 如果窗口跑到屏幕外，自动放回主屏幕工作区。
