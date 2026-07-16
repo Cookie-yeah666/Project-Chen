@@ -3,6 +3,7 @@
 > 旧名 Quiet Companion；当前对外项目名为 Project-Ze。
 
 ## Unreleased
+- 屏幕目标定位加强：高精度截图最长边提升到 2560，定位提示词同时强调文字 OCR、按钮/输入框文字、图标和邻近标签；精确定位不稳时追加 best-effort 候选定位，并降低有坐标候选时的移动门槛，让桌宠优先指向最像的位置而不是直接说没看到。
 - Windows 绿色版打包：`npm run dist:win` 输出 `release/win-unpacked/start.exe` 启动入口，打包期避开 `winCodeSign` 符号链接权限问题；打包后的主程序会在 Windows 上运行期自提权，降低安装器/下载器压掉桌宠窗口的概率。
 - Windows 绿色版启动修复：`start.exe` 改为原生启动器，先清理 `ELECTRON_RUN_AS_NODE` 再拉起 `Project-Ze.exe`，避免 Electron 被环境变量误当成 Node 运行导致双击无反应。
 - 屏幕目标指示视觉：使用 `src/assets/sprites/point/` 八方向 point 差分，按目标相对方向选择姿态，并在约 7 秒后只恢复普通视觉、不移动回原位

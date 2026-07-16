@@ -49,23 +49,45 @@ export interface ScreenTargetPointOptions {
 }
 
 const POINTER_KEYWORDS = [
+  '指',
   '指出',
   '指给我',
+  '指一下',
+  '指一指',
+  '指给我看',
   '在哪',
   '在哪里',
+  '哪里',
+  '位置',
   '帮我找',
   '找一下',
+  '找一个',
   '哪个按钮',
+  '哪个位置',
   '下载在哪',
   '怎么点',
-  '指一下',
+  '点哪里',
+  '该点哪',
   '帮我指出',
   '请指出',
   '帮我指',
-  '指给我看',
+  '入口',
+  '按钮',
+  '输入框',
+  '菜单',
+  '链接',
+  'where',
+  'find',
+  'point',
+  'show me',
+  'which button',
+  'where is',
+  'where to click',
+  'download',
 ];
 
-const CONFIDENCE_THRESHOLD = 0.72;
+const CONFIDENCE_THRESHOLD = 0.55;
+const TENTATIVE_CONFIDENCE_THRESHOLD = 0.35;
 const POINT_HOLD_MS = 7000;
 const MOVE_SCREEN_MONITOR_MS = 150;
 const POST_MOVE_CORRECTION_THRESHOLD_PX = 1.5;
@@ -280,7 +302,7 @@ export class ScreenTargetPointer {
   private canMove(result: ScreenTargetLocateResult): boolean {
     return result.found === true
       && Number.isFinite(result.confidence)
-      && result.confidence >= CONFIDENCE_THRESHOLD
+      && result.confidence >= TENTATIVE_CONFIDENCE_THRESHOLD
       && !!result.point
       && Number.isFinite(result.point.x)
       && Number.isFinite(result.point.y);
@@ -443,15 +465,16 @@ export class ScreenTargetPointer {
   private successMessage(result: ScreenTargetLocateResult): string {
     const label = result.label || '目标';
     if (result.confidence >= 0.9) return `这里是「${label}」。`;
-    return `我觉得是这里，你看看是不是「${label}」。`;
+    if (result.confidence >= CONFIDENCE_THRESHOLD) return `我觉得是这里，你看看是不是「${label}」。`;
+    return `我先指最像的位置：可能是「${label}」。`;
   }
 
   private failureMessage(message: string, result: ScreenTargetLocateResult): string {
     const label = result.label || this.extractTargetHint(message);
-    if (result.found && result.confidence > 0 && result.confidence < CONFIDENCE_THRESHOLD) {
-      return `我看到了可能的位置，但不太确定是不是「${label}」。你可以说得更具体一点。`;
+    if (result.point && result.confidence > 0 && result.confidence < TENTATIVE_CONFIDENCE_THRESHOLD) {
+      return `我看到了很弱的候选，但还不够稳。你可以把「${label}」附近放大一点或停在屏幕中央。`;
     }
-    return `我没太看清楚「${label}」在哪里。你可以把页面停在目标附近，再让我看一次。`;
+    return `我这次没识别到「${label}」的可指位置。你可以把页面停在目标附近，或直接说按钮/文字上的几个字。`;
   }
 
   private extractTargetHint(message: string): string {

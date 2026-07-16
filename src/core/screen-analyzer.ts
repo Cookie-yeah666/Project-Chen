@@ -10,7 +10,12 @@ import {
 const DEFAULT_VISION_REQUEST_TIMEOUT_MS = 18000;
 const LOCATE_TARGET_PRECISE_TIMEOUT_MS = 8000;
 const LOCATE_TARGET_LEGACY_TIMEOUT_MS = 5500;
-const LOCATE_TARGET_MAX_TOKENS = 320;
+const LOCATE_TARGET_BEST_EFFORT_TIMEOUT_MS = 6500;
+const LOCATE_TARGET_MAX_TOKENS = 520;
+const RELIABLE_LOCATE_CONFIDENCE = 0.62;
+const BEST_EFFORT_POINTABLE_CONFIDENCE = 0.35;
+const LOW_PRECISION_CAPTURE_MAX_SIDE = 1440;
+const HIGH_PRECISION_CAPTURE_MAX_SIDE = 2560;
 
 export interface ScreenCaptureFrame {
   imageDataUri: string;
@@ -49,6 +54,8 @@ export interface ScreenTargetLocateResult {
   confidence: number;
   point?: { x: number; y: number };
   box?: ScreenTargetBox;
+  targetKind?: string;
+  matchType?: string;
   reason?: string;
 }
 
@@ -198,13 +205,30 @@ export class ScreenAnalyzer {
     }
 
     try {
-      return await this.locateTargetWithCapture(userMessage, {
+      const precise = await this.locateTargetWithCapture(userMessage, {
         highPrecision: true,
         visionImageDetail: 'high',
         promptMode: 'precise',
         visionRequestTimeoutMs: LOCATE_TARGET_PRECISE_TIMEOUT_MS,
         visionMaxTokens: LOCATE_TARGET_MAX_TOKENS,
       });
+      if (this.isReliableLocateResult(precise.result)) {
+        return precise;
+      }
+
+      try {
+        const bestEffort = await this.locateTargetWithCapture(userMessage, {
+          highPrecision: true,
+          visionImageDetail: 'high',
+          promptMode: 'best-effort',
+          visionRequestTimeoutMs: LOCATE_TARGET_BEST_EFFORT_TIMEOUT_MS,
+          visionMaxTokens: LOCATE_TARGET_MAX_TOKENS,
+        });
+        return this.pickBetterLocateResponse(precise, bestEffort);
+      } catch (fallbackError: any) {
+        console.warn('[ScreenAnalyzer] Best-effort target locating failed; keeping precise result:', fallbackError?.message || fallbackError);
+        return precise;
+      }
     } catch (error: any) {
       if (!this.isVisionTimeoutError(error)) {
         throw error;
@@ -224,7 +248,7 @@ export class ScreenAnalyzer {
     userMessage: string,
     options: ScreenCaptureOptions & {
       visionImageDetail: 'low' | 'high';
-      promptMode: 'precise' | 'legacy';
+      promptMode: 'precise' | 'best-effort' | 'legacy';
       visionRequestTimeoutMs: number;
       visionMaxTokens?: number;
     }
@@ -236,12 +260,10 @@ export class ScreenAnalyzer {
     }
     const response = await this.callVisionAPI(
       frame.imageDataUri,
-      options.promptMode === 'precise'
-        ? this.buildPreciseLocatePrompt(userMessage, frame)
-        : this.buildLocatePrompt(userMessage, frame),
+      this.buildLocatePromptForMode(userMessage, frame, options.promptMode),
       {
         ...config,
-        visionSystemPrompt: '你是屏幕目标定位助手，只能输出 JSON，不要输出 Markdown。',
+        visionSystemPrompt: 'You are a screen target locator. Return one valid JSON object only. Do not use Markdown.',
         visionImageDetail: options.visionImageDetail,
         visionRequestTimeoutMs: options.visionRequestTimeoutMs,
         visionMaxTokens: options.visionMaxTokens,
@@ -259,6 +281,38 @@ export class ScreenAnalyzer {
     if (error?.name === 'AbortError') return true;
     if (message.includes('超时') || message.toLowerCase().includes('timeout')) return true;
     return /\(408\)/.test(message);
+  }
+
+  private isReliableLocateResult(result: ScreenTargetLocateResult): boolean {
+    return result.found === true
+      && !!result.point
+      && Number.isFinite(result.point.x)
+      && Number.isFinite(result.point.y)
+      && Number.isFinite(result.confidence)
+      && result.confidence >= RELIABLE_LOCATE_CONFIDENCE;
+  }
+
+  private pickBetterLocateResponse(
+    primary: ScreenTargetLocateResponse,
+    fallback: ScreenTargetLocateResponse
+  ): ScreenTargetLocateResponse {
+    const primaryPointable = this.isPointableLocateResult(primary.result);
+    const fallbackPointable = this.isPointableLocateResult(fallback.result);
+    if (!primaryPointable && fallbackPointable) return fallback;
+    if (primaryPointable && !fallbackPointable) return primary;
+    if (!primaryPointable && !fallbackPointable) return primary;
+
+    if (fallback.result.found && !primary.result.found) return fallback;
+    if (fallback.result.confidence > primary.result.confidence + 0.04) return fallback;
+    return primary;
+  }
+
+  private isPointableLocateResult(result: ScreenTargetLocateResult): boolean {
+    return !!result.point
+      && Number.isFinite(result.point.x)
+      && Number.isFinite(result.point.y)
+      && Number.isFinite(result.confidence)
+      && result.confidence >= BEST_EFFORT_POINTABLE_CONFIDENCE;
   }
 
   mapPointToScreen(frame: ScreenCaptureFrame, point: { x: number; y: number }): { x: number; y: number } {
@@ -280,35 +334,68 @@ export class ScreenAnalyzer {
     return screenPoint;
   }
 
+  private buildLocatePromptForMode(
+    userMessage: string,
+    frame: ScreenCaptureFrame,
+    mode: 'precise' | 'best-effort' | 'legacy'
+  ): string {
+    if (mode === 'precise') return this.buildPreciseLocatePrompt(userMessage, frame);
+    if (mode === 'best-effort') return this.buildBestEffortLocatePrompt(userMessage, frame);
+    return this.buildLocatePrompt(userMessage, frame);
+  }
+
   private buildPreciseLocatePrompt(userMessage: string, frame: ScreenCaptureFrame): string {
     return [
-      'Locate one visible UI target in the current screenshot.',
+      'Locate exactly one visible screen target in the current screenshot.',
       `User request: ${userMessage}`,
       `Screenshot size: ${frame.imageSize.width}x${frame.imageSize.height}`,
       'Coordinate rules: origin is the screenshot top-left corner, x grows right, y grows down.',
+      'First do OCR: read all visible text, including button text, link text, menu text, labels, placeholders, tabs, titles, and nearby captions.',
+      'Also inspect visual patterns: icons, logos, colored buttons, input boxes, checkboxes, menus, window controls, and text-associated controls.',
+      'Match by exact text first, then partial text, translated/synonym text, icon meaning, and surrounding UI context.',
+      'If the target is a text label itself, return a tight box around that text and point to its center.',
+      'If the target is a button/link/menu item/input identified by text, return the whole clickable control box, not only the text glyphs.',
+      'If the target is an icon with a nearby label, use both the icon and nearby text to choose the clickable region.',
       'Return the tight bounding box of the visible target as box: {x,y,width,height}.',
-      'Return point as the visual center of that box unless a more precise clickable center is obvious.',
-      'Only choose a clear visible button, link, text entry, icon, menu item, or obvious UI region.',
-      'If the target is invisible, ambiguous, or uncertain, return found=false or confidence below 0.72.',
+      'Return point as the clickable center of that box unless a more precise useful point is obvious.',
+      'If several candidates exist, choose the one most likely to satisfy the user request now; include lower confidence instead of refusing.',
+      'Only return found=false when no related visible text, icon, or UI candidate exists in the screenshot.',
       'Output one JSON object only. No Markdown.',
-      '{"found":true,"label":"target name","confidence":0.82,"box":{"x":80,"y":180,"width":120,"height":40},"point":{"x":140,"y":200},"reason":"why this is the target"}',
+      '{"found":true,"label":"target name","targetKind":"button|text|input|icon|menu|region","matchType":"exact_text|partial_text|icon|context|best_effort","confidence":0.82,"box":{"x":80,"y":180,"width":120,"height":40},"point":{"x":140,"y":200},"reason":"why this is the target"}',
       '{"found":false,"label":"target name","confidence":0,"reason":"target is not visible in this screenshot"}',
+    ].join('\n');
+  }
+
+  private buildBestEffortLocatePrompt(userMessage: string, frame: ScreenCaptureFrame): string {
+    return [
+      'Find the best visible candidate for the user request. Prefer pointing to something useful over saying not found.',
+      `User request: ${userMessage}`,
+      `Screenshot size: ${frame.imageSize.width}x${frame.imageSize.height}`,
+      'Coordinate rules: origin is the screenshot top-left corner, x grows right, y grows down.',
+      'Read visible text carefully. Text is as important as icons and pictures.',
+      'Consider exact text, partial text, Chinese/English equivalents, icon meaning, nearby labels, placeholders, tabs, and window title context.',
+      'If the exact target is not visible but a related next-step candidate is visible, return that best candidate with confidence between 0.35 and 0.70.',
+      'If there are multiple plausible candidates, rank them in candidates and set point/box to the best one.',
+      'Use found=true whenever there is a visible candidate worth pointing at. Use found=false only when the screenshot contains nothing related.',
+      'Return a tight box and a point at the clickable/text center.',
+      'Output one JSON object only. No Markdown.',
+      '{"found":true,"label":"best visible candidate","targetKind":"button|text|input|icon|menu|region","matchType":"best_effort","confidence":0.56,"box":{"x":80,"y":180,"width":120,"height":40},"point":{"x":140,"y":200},"candidates":[{"label":"candidate A","confidence":0.56,"box":{"x":80,"y":180,"width":120,"height":40},"point":{"x":140,"y":200}},{"label":"candidate B","confidence":0.44,"box":{"x":300,"y":180,"width":110,"height":36},"point":{"x":355,"y":198}}],"reason":"why this is the most useful visible candidate"}',
+      '{"found":false,"label":"target name","confidence":0,"reason":"no related visible text, icon, or UI candidate"}',
     ].join('\n');
   }
 
   private buildLocatePrompt(userMessage: string, frame: ScreenCaptureFrame): string {
     return [
-      '用户希望你在当前截图中定位一个可见的屏幕目标。',
-      `用户请求：${userMessage}`,
-      `截图像素尺寸：${frame.imageSize.width}x${frame.imageSize.height}`,
-      '坐标规则：point 必须是截图左上角为 (0,0) 的像素坐标，x 向右增大，y 向下增大。',
-      '只定位当前截图中清晰可见的按钮、链接、文字入口或明显 UI 区域。',
-      '如果目标不可见、候选过多、或你不确定，请返回 found=false 或 confidence 低于 0.72。',
-      '只输出一个 JSON 对象，格式必须是：',
-      '{"found":true,"label":"目标名称","confidence":0.82,"point":{"x":100,"y":200},"reason":"为什么认为这里是目标"}',
-      '如果找不到，输出：',
-      '{"found":false,"label":"目标名称","confidence":0,"reason":"当前截图里没看到目标"}',
-      '不要输出解释文字，不要使用 Markdown 代码块。',
+      'Locate one visible screen target in the current screenshot.',
+      `User request: ${userMessage}`,
+      `Screenshot size: ${frame.imageSize.width}x${frame.imageSize.height}`,
+      'Coordinate rules: point must be screenshot pixel coordinates, origin top-left, x right, y down.',
+      'Read visible text first, then inspect icons and UI shapes. Button/link/input text and nearby labels are important.',
+      'Return a useful visible candidate when possible. Use lower confidence for partial/uncertain matches instead of refusing.',
+      'Return found=false only when no related visible candidate exists.',
+      'Output one JSON object only. No Markdown.',
+      '{"found":true,"label":"target name","confidence":0.62,"box":{"x":80,"y":180,"width":120,"height":40},"point":{"x":140,"y":200},"reason":"why this is the target"}',
+      '{"found":false,"label":"target name","confidence":0,"reason":"target is not visible"}',
     ].join('\n');
   }
 
@@ -324,19 +411,28 @@ export class ScreenAnalyzer {
       const match = raw.match(/\{[\s\S]*\}/);
       if (!match) return fallback;
       const parsed = JSON.parse(match[0]) as any;
-      const confidence = typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence)
-        ? Math.max(0, Math.min(1, parsed.confidence))
-        : 0;
-      const label = typeof parsed.label === 'string' ? parsed.label.trim() : '';
-      const reason = typeof parsed.reason === 'string' ? parsed.reason.trim() : '';
-      const box = this.parseBox(parsed.box ?? parsed.bbox ?? parsed.boundingBox, frame);
-      const point = this.parsePoint(parsed.point, frame) ?? this.centerOfBox(box);
+      const payload = this.resolveLocatePayload(parsed);
+      const confidence = this.parseConfidence(payload.confidence ?? parsed.confidence);
+      const label = this.parseText(payload.label ?? parsed.label);
+      const reason = this.parseText(payload.reason ?? parsed.reason);
+      const targetKind = this.parseText(payload.targetKind ?? payload.kind ?? parsed.targetKind ?? parsed.kind);
+      const matchType = this.parseText(payload.matchType ?? payload.match ?? parsed.matchType ?? parsed.match);
+      const box = this.parseBox(
+        payload.box ?? payload.bbox ?? payload.boundingBox ?? payload.bounds ?? payload.region,
+        frame
+      );
+      const point = this.parsePoint(
+        payload.point ?? payload.center ?? payload.coordinate ?? payload.coordinates,
+        frame
+      ) ?? this.centerOfBox(box);
       const locateResult = {
-        found: parsed.found === true && !!point,
+        found: !!point && (payload.found === true || parsed.found === true || confidence >= BEST_EFFORT_POINTABLE_CONFIDENCE),
         label,
         confidence,
         point,
         box,
+        targetKind,
+        matchType,
         reason,
       };
       console.log('[ScreenAnalyzer][debug] locate result:', locateResult);
@@ -347,21 +443,86 @@ export class ScreenAnalyzer {
     }
   }
 
+  private resolveLocatePayload(parsed: any): any {
+    const candidates = Array.isArray(parsed?.candidates)
+      ? parsed.candidates.filter((candidate: any) => candidate && typeof candidate === 'object')
+      : [];
+    if (candidates.length === 0) return parsed;
+
+    const sortedCandidates = candidates
+      .slice()
+      .sort((a: any, b: any) => this.parseConfidence(b.confidence) - this.parseConfidence(a.confidence));
+    const topCandidate = sortedCandidates[0];
+    const parsedHasLocation = this.hasRawLocation(parsed);
+    if (parsedHasLocation && parsed.found !== false) return parsed;
+
+    return {
+      ...parsed,
+      ...topCandidate,
+      label: topCandidate.label ?? parsed.label,
+      reason: topCandidate.reason ?? parsed.reason,
+      targetKind: topCandidate.targetKind ?? topCandidate.kind ?? parsed.targetKind ?? parsed.kind,
+      matchType: topCandidate.matchType ?? topCandidate.match ?? parsed.matchType ?? parsed.match,
+      confidence: topCandidate.confidence ?? parsed.confidence,
+      found: topCandidate.found ?? parsed.found,
+    };
+  }
+
+  private hasRawLocation(value: any): boolean {
+    if (!value || typeof value !== 'object') return false;
+    return !!(value.point || value.center || value.coordinate || value.coordinates || value.box || value.bbox || value.boundingBox || value.bounds || value.region);
+  }
+
+  private parseConfidence(value: any): number {
+    const confidence = Number(value);
+    return Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
+  }
+
+  private parseText(value: any): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
   private parsePoint(value: any, frame: ScreenCaptureFrame): { x: number; y: number } | undefined {
-    if (!value || typeof value !== 'object') return undefined;
-    const x = Number(value.x);
-    const y = Number(value.y);
+    if (!value) return undefined;
+    if (Array.isArray(value) && value.length >= 2) {
+      return this.parsePoint({ x: value[0], y: value[1] }, frame);
+    }
+    if (typeof value !== 'object') return undefined;
+    const x = Number(value.x ?? value.left ?? value.cx ?? value.centerX);
+    const y = Number(value.y ?? value.top ?? value.cy ?? value.centerY);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
     if (x < 0 || y < 0 || x > frame.imageSize.width || y > frame.imageSize.height) return undefined;
     return { x: Math.round(x), y: Math.round(y) };
   }
 
   private parseBox(value: any, frame: ScreenCaptureFrame): ScreenTargetBox | undefined {
-    if (!value || typeof value !== 'object') return undefined;
-    const rawX = Number(value.x);
-    const rawY = Number(value.y);
-    const rawWidth = Number(value.width ?? value.w);
-    const rawHeight = Number(value.height ?? value.h);
+    if (!value) return undefined;
+    if (Array.isArray(value) && value.length >= 4) {
+      const left = Number(value[0]);
+      const top = Number(value[1]);
+      const right = Number(value[2]);
+      const bottom = Number(value[3]);
+      if (
+        Number.isFinite(left) &&
+        Number.isFinite(top) &&
+        Number.isFinite(right) &&
+        Number.isFinite(bottom) &&
+        right > left &&
+        bottom > top &&
+        right <= frame.imageSize.width &&
+        bottom <= frame.imageSize.height
+      ) {
+        return this.parseBox({ left, top, right, bottom }, frame);
+      }
+      return this.parseBox({ x: value[0], y: value[1], width: value[2], height: value[3] }, frame);
+    }
+    if (typeof value !== 'object') return undefined;
+    const rawX = Number(value.x ?? value.left ?? value.x1);
+    const rawY = Number(value.y ?? value.top ?? value.y1);
+    const rightValue = value.right ?? value.x2;
+    const bottomValue = value.bottom ?? value.y2;
+    const rawWidth = Number(value.width ?? value.w ?? (rightValue !== undefined ? Number(rightValue) - rawX : undefined));
+    const rawHeight = Number(value.height ?? value.h ?? (bottomValue !== undefined ? Number(bottomValue) - rawY : undefined));
     if (
       !Number.isFinite(rawX) ||
       !Number.isFinite(rawY) ||
@@ -464,11 +625,7 @@ function resolveCaptureThumbnailSize(
 ): { width: number; height: number } {
   const width = Math.max(1, Math.round(bounds.width));
   const height = Math.max(1, Math.round(bounds.height));
-  if (!options.highPrecision) {
-    return { width: 1280, height: 720 };
-  }
-
-  const maxSide = 1920;
+  const maxSide = options.highPrecision ? HIGH_PRECISION_CAPTURE_MAX_SIDE : LOW_PRECISION_CAPTURE_MAX_SIDE;
   const scale = Math.min(1, maxSide / Math.max(width, height));
   return {
     width: Math.max(1, Math.round(width * scale)),
