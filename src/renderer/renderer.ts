@@ -97,6 +97,8 @@
   var guideExitBtnEl = document.getElementById('guide-exit-btn') as HTMLButtonElement | null;
   var chatStatusTimer: ReturnType<typeof setTimeout> | null = null;
   var activeTtsAudio: HTMLAudioElement | null = null;
+  var interactiveHoverCount = 0;
+  var mouseCaptureReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 
   var voiceRecorder: MediaRecorder | null = null;
   var voiceSessionId: string | null = null;
@@ -165,16 +167,59 @@
   var isDraggingGlobal = false;
 
   function setupClickThrough(): void {
-    companionEl.addEventListener('mouseenter', function () {
-      // @ts-ignore
-      window.companion.sendMouseEnter();
-    });
-    companionEl.addEventListener('mouseleave', function () {
+    registerInteractiveHitTarget(companionEl);
+    registerInteractiveHitTarget(guidePanelEl);
+    registerInteractiveHitTarget(chatInputWrapEl);
+    registerInteractiveHitTarget(voiceInputBtnEl);
+  }
+
+  function registerInteractiveHitTarget(el: HTMLElement | null): void {
+    if (!el) return;
+    var inside = false;
+
+    function enter(): void {
+      if (inside) return;
+      inside = true;
+      interactiveHoverCount += 1;
+      captureMouseForControls();
+    }
+
+    function leave(): void {
+      if (!inside) return;
+      inside = false;
+      interactiveHoverCount = Math.max(0, interactiveHoverCount - 1);
+      releaseMouseForControlsSoon();
+    }
+
+    el.addEventListener('mouseenter', enter);
+    el.addEventListener('pointerenter', enter);
+    el.addEventListener('mousedown', enter);
+    el.addEventListener('pointerdown', enter);
+    el.addEventListener('mouseleave', leave);
+    el.addEventListener('pointerleave', leave);
+  }
+
+  function captureMouseForControls(): void {
+    if (mouseCaptureReleaseTimer) {
+      clearTimeout(mouseCaptureReleaseTimer);
+      mouseCaptureReleaseTimer = null;
+    }
+    // @ts-ignore
+    window.companion.sendMouseEnter();
+  }
+
+  function releaseMouseForControlsSoon(): void {
+    if (mouseCaptureReleaseTimer) {
+      clearTimeout(mouseCaptureReleaseTimer);
+      mouseCaptureReleaseTimer = null;
+    }
+    mouseCaptureReleaseTimer = setTimeout(function () {
+      if (interactiveHoverCount > 0) return;
       // 拖拽期间不切换穿透，否则鼠标离开角色区域后拖拽会断
       if (isDraggingGlobal) return;
       // @ts-ignore
       window.companion.sendMouseLeave();
-    });
+    }, 90);
   }
 
   function setupDragHandling(): void {
@@ -656,6 +701,8 @@
       guidePanelEl.classList.add('hidden');
       guideTitleEl.textContent = '';
       guideMessageEl.textContent = '';
+      interactiveHoverCount = 0;
+      releaseMouseForControlsSoon();
       return;
     }
 
@@ -675,6 +722,30 @@
     if (guideExitBtnEl) {
       guideExitBtnEl.disabled = payload.canExit !== true;
     }
+  }
+
+  function bindGuideActionButton(button: HTMLButtonElement | null, action: () => void): void {
+    if (!button) return;
+    var target = button;
+
+    function clearPressed(): void {
+      target.classList.remove('guide-btn-pressed');
+    }
+
+    target.addEventListener('pointerdown', function (e: PointerEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      captureMouseForControls();
+      if (target.disabled) return;
+
+      target.classList.add('guide-btn-pressed');
+      action();
+      setTimeout(clearPressed, 140);
+    });
+
+    target.addEventListener('pointerup', clearPressed);
+    target.addEventListener('pointercancel', clearPressed);
+    target.addEventListener('pointerleave', clearPressed);
   }
 
   /** 播放随机音效 */
@@ -765,26 +836,20 @@
       });
     }
 
-    if (guideNextBtnEl) {
-      guideNextBtnEl.addEventListener('click', function () {
-        // @ts-ignore
-        window.companion.guide?.next?.();
-      });
-    }
+    bindGuideActionButton(guideNextBtnEl, function () {
+      // @ts-ignore
+      window.companion.guide?.next?.();
+    });
 
-    if (guideReidentifyBtnEl) {
-      guideReidentifyBtnEl.addEventListener('click', function () {
-        // @ts-ignore
-        window.companion.guide?.reidentify?.();
-      });
-    }
+    bindGuideActionButton(guideReidentifyBtnEl, function () {
+      // @ts-ignore
+      window.companion.guide?.reidentify?.();
+    });
 
-    if (guideExitBtnEl) {
-      guideExitBtnEl.addEventListener('click', function () {
-        // @ts-ignore
-        window.companion.guide?.exit?.();
-      });
-    }
+    bindGuideActionButton(guideExitBtnEl, function () {
+      // @ts-ignore
+      window.companion.guide?.exit?.();
+    });
 
     // 主进程发来的语音输入状态
     // @ts-ignore
