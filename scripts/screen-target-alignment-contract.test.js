@@ -10,41 +10,41 @@ const {
 } = require('../dist/core/screen-target-alignment');
 
 function testOffsetsUseSpriteFingertipsByDefault() {
-  const size = { width: 250, height: 280 };
-  assert.deepStrictEqual(pointerOffsetForPose('point-left_up', size), { x: 53, y: 132 });
-  assert.deepStrictEqual(pointerOffsetForPose('point-right_up', size), { x: 192, y: 131 });
-  assert.deepStrictEqual(pointerOffsetForPose('point-right_down', size), { x: 199, y: 234 });
-  assert.deepStrictEqual(pointerOffsetForPose('point-left_down', size), { x: 59, y: 230 });
-  assert.deepStrictEqual(pointerOffsetForPose('point-left', size), { x: 46, y: 181 });
-  assert.deepStrictEqual(pointerOffsetForPose('point-right', size), { x: 205, y: 184 });
-  assert.deepStrictEqual(pointerOffsetForPose('point-up', size), { x: 75, y: 121 });
-  assert.deepStrictEqual(pointerOffsetForPose('point-down', size), { x: 130, y: 263 });
+  const size = { width: 250, height: 350 };
+  assert.deepStrictEqual(pointerOffsetForPose('point-left_up', size), { x: 53, y: 202 });
+  assert.deepStrictEqual(pointerOffsetForPose('point-right_up', size), { x: 192, y: 201 });
+  assert.deepStrictEqual(pointerOffsetForPose('point-right_down', size), { x: 199, y: 304 });
+  assert.deepStrictEqual(pointerOffsetForPose('point-left_down', size), { x: 59, y: 300 });
+  assert.deepStrictEqual(pointerOffsetForPose('point-left', size), { x: 46, y: 251 });
+  assert.deepStrictEqual(pointerOffsetForPose('point-right', size), { x: 205, y: 254 });
+  assert.deepStrictEqual(pointerOffsetForPose('point-up', size), { x: 75, y: 191 });
+  assert.deepStrictEqual(pointerOffsetForPose('point-down', size), { x: 130, y: 333 });
 }
 
 function testOffsetsScaleWithAppearanceWindowSize() {
-  const size = { width: 350, height: 380 };
-  assert.deepStrictEqual(pointerOffsetForPose('point-right_up', size), { x: 275, y: 156 });
-  assert.deepStrictEqual(pointerOffsetForPose('point-down', size), { x: 183, y: 354 });
+  const size = { width: 350, height: 450 };
+  assert.deepStrictEqual(pointerOffsetForPose('point-right_up', size), { x: 275, y: 226 });
+  assert.deepStrictEqual(pointerOffsetForPose('point-down', size), { x: 183, y: 424 });
 }
 
 function testCompanionBoxMatchesRendererWindowLayout() {
-  assert.deepStrictEqual(resolveCompanionBox({ width: 250, height: 280 }), { left: 25, top: 80, size: 200 });
-  assert.deepStrictEqual(resolveCompanionBox({ width: 350, height: 380 }), { left: 25, top: 80, size: 300 });
+  assert.deepStrictEqual(resolveCompanionBox({ width: 250, height: 350 }), { left: 25, top: 150, size: 200 });
+  assert.deepStrictEqual(resolveCompanionBox({ width: 350, height: 450 }), { left: 25, top: 150, size: 300 });
 }
 
 function testPointerRegionFallbackCanStillUseInsetOrDisableIt() {
-  const size = { width: 250, height: 280 };
+  const size = { width: 250, height: 350 };
   const noInset = { useSpriteFingertips: false, regionInsetRatio: 0, minRegionInsetPx: 0, maxRegionInsetPx: 0 };
   assert.deepStrictEqual(resolvePointerRegion(size, noInset), {
     left: 0,
     top: 0,
     right: 250,
-    bottom: 280,
+    bottom: 350,
     centerX: 125,
-    centerY: 140,
+    centerY: 175,
   });
   assert.deepStrictEqual(pointerOffsetForPose('point-right_up', size, noInset), { x: 250, y: 0 });
-  assert.deepStrictEqual(pointerOffsetForPose('point-right_up', size, { useSpriteFingertips: false }), { x: 230, y: 22 });
+  assert.deepStrictEqual(pointerOffsetForPose('point-right_up', size, { useSpriteFingertips: false }), { x: 230, y: 26 });
 }
 
 function testPoseUsesAxisSignsForDiagonalMovement() {
@@ -60,27 +60,27 @@ function testPoseFallsBackToSingleAxisWhenOtherAxisIsTiny() {
 }
 
 function testResolvePoseConfigCombinesPoseAndCornerOffset() {
-  const bounds = { x: 100, y: 100, width: 250, height: 280 };
+  const bounds = { x: 100, y: 100, width: 250, height: 350 };
   const result = resolvePointerPoseConfig({ x: 430, y: 40 }, bounds);
   assert.deepStrictEqual(result, {
     pose: 'point-right_up',
-    pointerOffset: { x: 192, y: 131 },
+    pointerOffset: { x: 192, y: 201 },
   });
 }
 
 function testCandidateReportsExactAlignmentWithoutClamp() {
-  const bounds = { x: 100, y: 100, width: 250, height: 280 };
+  const bounds = { x: 100, y: 100, width: 250, height: 350 };
   const result = resolvePointerPoseCandidate({ x: 430, y: 40 }, bounds);
   assert.strictEqual(result.pose, 'point-right_up');
-  assert.deepStrictEqual(result.pointerOffset, { x: 192, y: 131 });
-  assert.deepStrictEqual(result.desiredTopLeft, { x: 238, y: -91 });
-  assert.deepStrictEqual(result.clampedTopLeft, { x: 238, y: -91 });
+  assert.deepStrictEqual(result.pointerOffset, { x: 192, y: 201 });
+  assert.deepStrictEqual(result.desiredTopLeft, { x: 238, y: -161 });
+  assert.deepStrictEqual(result.clampedTopLeft, { x: 238, y: -161 });
   assert.deepStrictEqual(result.actualPoint, { x: 430, y: 40 });
   assert.strictEqual(result.errorPx, 0);
 }
 
 function testCandidateKeepsPreferredPoseWhenAllPosesCanAlign() {
-  const bounds = { x: 100, y: 100, width: 250, height: 280 };
+  const bounds = { x: 100, y: 100, width: 250, height: 350 };
   const result = resolvePointerPoseCandidate(
     { x: 430, y: 40 },
     bounds,

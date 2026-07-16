@@ -253,10 +253,11 @@ html, body {
 #guide-panel {
   position: absolute;
   left: 50%;
-  bottom: 54px;
+  top: 8px;
   transform: translateX(-50%);
   width: 238px;
-  padding: 9px;
+  max-height: 134px;
+  padding: 8px;
   border-radius: 8px;
   background: rgba(32, 34, 38, 0.72);
   color: rgba(255, 255, 255, 0.94);
@@ -265,6 +266,7 @@ html, body {
   backdrop-filter: blur(8px);
   pointer-events: auto;
   z-index: 150;
+  overflow: hidden;
 }
 
 #guide-panel.hidden {
@@ -282,24 +284,54 @@ html, body {
 
 #guide-message {
   margin-top: 4px;
-  min-height: 30px;
-  max-height: 42px;
+  min-height: 24px;
+  max-height: 56px;
   font-size: 12px;
   line-height: 1.35;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   word-break: break-word;
+}
+
+.guide-url-copy {
+  display: inline;
+  max-width: 100%;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #8fd5ff;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.guide-url-copy:hover {
+  color: #bde9ff;
+}
+
+.guide-url-copy.guide-url-copied::after {
+  content: ' 已复制';
+  color: rgba(191, 255, 214, 0.95);
+  text-decoration: none;
 }
 
 #guide-actions {
   display: flex;
   gap: 7px;
-  margin-top: 8px;
+  margin-top: 7px;
 }
 
 #guide-actions button {
   flex: 1 1 0;
   min-width: 0;
-  height: 32px;
+  height: 29px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.17);

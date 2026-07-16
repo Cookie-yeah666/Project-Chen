@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from 'electron';
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell } from 'electron';
 import * as childProcess from 'child_process';
 import * as path from 'path';
 import { StateManager } from '../core/state-manager';
@@ -73,6 +73,10 @@ let isAppQuitting = false;
 
 const COMPANION_VISIBILITY_CHECK_MS = 1200;
 const COMPANION_TOPMOST_REFRESH_MS = 5000;
+const DEFAULT_PET_SIZE_PX = 200;
+const COMPANION_WINDOW_EXTRA_WIDTH_PX = 50;
+const COMPANION_WINDOW_EXTRA_HEIGHT_PX = 150;
+const COMPANION_WINDOW_SCREEN_MARGIN_PX = 20;
 const WINDOWS_AUTO_ELEVATE_SKIP_ENV = 'PROJECT_ZE_SKIP_AUTO_ELEVATE';
 
 function isRunningAsWindowsAdmin(): boolean {
@@ -112,13 +116,15 @@ function relaunchPackagedWindowsAppAsAdmin(): boolean {
 }
 
 function createWindow(): void {
-  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const windowWidth = DEFAULT_PET_SIZE_PX + COMPANION_WINDOW_EXTRA_WIDTH_PX;
+  const windowHeight = DEFAULT_PET_SIZE_PX + COMPANION_WINDOW_EXTRA_HEIGHT_PX;
 
   mainWindow = new BrowserWindow({
-    width: 250,
-    height: 280,
-    x: screenWidth - 270,
-    y: screenHeight - 270,
+    width: windowWidth,
+    height: windowHeight,
+    x: Math.round(workArea.x + workArea.width - windowWidth - COMPANION_WINDOW_SCREEN_MARGIN_PX),
+    y: Math.round(workArea.y + workArea.height - windowHeight - COMPANION_WINDOW_SCREEN_MARGIN_PX),
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -403,6 +409,13 @@ function setupIPC(): void {
     return operationGuideConfigManager?.update(config);
   });
 
+  ipcMain.handle('clipboard-write-text', (_event, text: string) => {
+    const value = typeof text === 'string' ? text : String(text || '');
+    if (!value.trim()) return { success: false, message: 'no text' };
+    clipboard.writeText(value);
+    return { success: true };
+  });
+
   ipcMain.on('open-settings', () => {
     createSettingsWindow();
   });
@@ -472,7 +485,11 @@ function setupIPC(): void {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     // 调整窗口大小
     const newSize = config.petSize || 200;
-    mainWindow.setSize(newSize + 50, newSize + 80);
+    mainWindow.setSize(
+      newSize + COMPANION_WINDOW_EXTRA_WIDTH_PX,
+      newSize + COMPANION_WINDOW_EXTRA_HEIGHT_PX
+    );
+    keepMainWindowInsideVisibleDisplay();
     // 设置透明度
     mainWindow.setOpacity(config.opacity ?? 1.0);
     // 通知渲染进程更新精灵图大小

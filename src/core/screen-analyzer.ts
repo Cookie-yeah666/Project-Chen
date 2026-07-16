@@ -1,4 +1,4 @@
-import { desktopCapturer, screen } from 'electron';
+import { desktopCapturer, nativeImage, screen } from 'electron';
 import { AIConfigManager } from './ai-config';
 import {
   SCREEN_FINGERPRINT_HEIGHT,
@@ -11,11 +11,21 @@ const DEFAULT_VISION_REQUEST_TIMEOUT_MS = 18000;
 const LOCATE_TARGET_PRECISE_TIMEOUT_MS = 8000;
 const LOCATE_TARGET_LEGACY_TIMEOUT_MS = 5500;
 const LOCATE_TARGET_BEST_EFFORT_TIMEOUT_MS = 6500;
+const LOCATE_TARGET_REFINE_TIMEOUT_MS = 4500;
+const LOCATE_TARGET_REFINE_MIN_BUDGET_MS = 1200;
 const LOCATE_TARGET_MAX_TOKENS = 520;
 const RELIABLE_LOCATE_CONFIDENCE = 0.62;
 const BEST_EFFORT_POINTABLE_CONFIDENCE = 0.35;
 const LOW_PRECISION_CAPTURE_MAX_SIDE = 1440;
 const HIGH_PRECISION_CAPTURE_MAX_SIDE = 2560;
+const REFINE_CONFIDENCE_THRESHOLD = 0.4;
+const REFINE_SMALL_BOX_MAX_WIDTH = 260;
+const REFINE_SMALL_BOX_MAX_HEIGHT = 90;
+const REFINE_CROP_MIN_SIDE = 280;
+const REFINE_CROP_MAX_SIDE = 1100;
+const REFINE_CROP_MAX_OUTPUT_SIDE = 1600;
+const REFINE_CROP_MARGIN_MIN = 64;
+const REFINE_CROP_MARGIN_MAX = 260;
 
 export interface ScreenCaptureFrame {
   imageDataUri: string;
@@ -62,6 +72,13 @@ export interface ScreenTargetLocateResult {
 export interface ScreenTargetLocateResponse {
   result: ScreenTargetLocateResult;
   frame: ScreenCaptureFrame;
+}
+
+interface ScreenTargetRefinementCrop {
+  imageDataUri: string;
+  cropBox: ScreenTargetBox;
+  imageSize: { width: number; height: number };
+  scale: number;
 }
 
 export class ScreenAnalyzer {
@@ -205,25 +222,37 @@ export class ScreenAnalyzer {
     }
 
     try {
-      const precise = await this.locateTargetWithCapture(userMessage, {
+      const preciseStartedAt = Date.now();
+      const preciseBase = await this.locateTargetWithCapture(userMessage, {
         highPrecision: true,
         visionImageDetail: 'high',
         promptMode: 'precise',
         visionRequestTimeoutMs: LOCATE_TARGET_PRECISE_TIMEOUT_MS,
         visionMaxTokens: LOCATE_TARGET_MAX_TOKENS,
       });
+      const precise = await this.refineLocateResponseIfUseful(
+        userMessage,
+        preciseBase,
+        remainingBudgetMs(preciseStartedAt, LOCATE_TARGET_PRECISE_TIMEOUT_MS)
+      );
       if (this.isReliableLocateResult(precise.result)) {
         return precise;
       }
 
       try {
-        const bestEffort = await this.locateTargetWithCapture(userMessage, {
+        const bestEffortStartedAt = Date.now();
+        const bestEffortBase = await this.locateTargetWithCapture(userMessage, {
           highPrecision: true,
           visionImageDetail: 'high',
           promptMode: 'best-effort',
           visionRequestTimeoutMs: LOCATE_TARGET_BEST_EFFORT_TIMEOUT_MS,
           visionMaxTokens: LOCATE_TARGET_MAX_TOKENS,
         });
+        const bestEffort = await this.refineLocateResponseIfUseful(
+          userMessage,
+          bestEffortBase,
+          remainingBudgetMs(bestEffortStartedAt, LOCATE_TARGET_BEST_EFFORT_TIMEOUT_MS)
+        );
         return this.pickBetterLocateResponse(precise, bestEffort);
       } catch (fallbackError: any) {
         console.warn('[ScreenAnalyzer] Best-effort target locating failed; keeping precise result:', fallbackError?.message || fallbackError);
@@ -274,6 +303,229 @@ export class ScreenAnalyzer {
       result: this.parseLocateResult(response, frame),
       frame,
     };
+  }
+
+  private async refineLocateResponseIfUseful(
+    userMessage: string,
+    response: ScreenTargetLocateResponse,
+    timeBudgetMs: number = LOCATE_TARGET_REFINE_TIMEOUT_MS
+  ): Promise<ScreenTargetLocateResponse> {
+    if (!this.shouldRefineLocateResult(response.result, response.frame)) {
+      return response;
+    }
+    if (timeBudgetMs < LOCATE_TARGET_REFINE_MIN_BUDGET_MS) {
+      return response;
+    }
+
+    const crop = this.createRefinementCrop(response.frame, response.result);
+    if (!crop) return response;
+    const refineTimeoutMs = Math.min(LOCATE_TARGET_REFINE_TIMEOUT_MS, timeBudgetMs);
+
+    try {
+      const config = this.configManager.get();
+      const raw = await this.callVisionAPI(
+        crop.imageDataUri,
+        this.buildRefineLocatePrompt(userMessage, response.result, crop),
+        {
+          ...config,
+          visionSystemPrompt: 'You are a zoomed crop target verifier. Return one valid JSON object only. Do not use Markdown.',
+          visionImageDetail: 'high',
+          visionRequestTimeoutMs: refineTimeoutMs,
+          visionMaxTokens: LOCATE_TARGET_MAX_TOKENS,
+        }
+      );
+      const localFrame = this.createLocalFrameForCrop(crop);
+      const refinedLocal = this.parseLocateResult(raw, localFrame);
+      const refined = this.mapRefinedResultToParentFrame(response.result, refinedLocal, crop);
+      if (!this.isUsefulRefinedResult(refined, response.result)) {
+        return response;
+      }
+
+      console.log('[ScreenAnalyzer][debug] algorithm3 refined locate result:', {
+        original: response.result,
+        crop: {
+          cropBox: crop.cropBox,
+          imageSize: crop.imageSize,
+          scale: crop.scale,
+        },
+        refinedLocal,
+        refined,
+      });
+      return { result: refined, frame: response.frame };
+    } catch (error: any) {
+      console.warn('[ScreenAnalyzer] Algorithm3 crop refinement skipped:', error?.message || error);
+      return response;
+    }
+  }
+
+  private shouldRefineLocateResult(result: ScreenTargetLocateResult, frame: ScreenCaptureFrame): boolean {
+    if (!this.isPointableLocateResult(result)) return false;
+    const box = result.box;
+    if (!box) return result.confidence < 0.86;
+
+    const frameArea = Math.max(1, frame.imageSize.width * frame.imageSize.height);
+    const boxArea = Math.max(1, box.width * box.height);
+    const smallTextOrIconLike = box.width <= REFINE_SMALL_BOX_MAX_WIDTH || box.height <= REFINE_SMALL_BOX_MAX_HEIGHT;
+    const notTooLarge = boxArea / frameArea <= 0.2;
+    const uncertainty = result.confidence < 0.9;
+    const semanticNeedsPrecision = ['text', 'button', 'input', 'icon', 'menu', 'link'].includes((result.targetKind || '').toLowerCase());
+    return notTooLarge && (uncertainty || smallTextOrIconLike || semanticNeedsPrecision);
+  }
+
+  private createRefinementCrop(
+    frame: ScreenCaptureFrame,
+    result: ScreenTargetLocateResult
+  ): ScreenTargetRefinementCrop | null {
+    const cropBox = this.resolveRefinementCropBox(frame, result);
+    if (!cropBox) return null;
+
+    const sourceImage = nativeImage.createFromDataURL(frame.imageDataUri);
+    if (sourceImage.isEmpty()) return null;
+
+    const cropped = sourceImage.crop(cropBox);
+    if (cropped.isEmpty()) return null;
+
+    const scale = resolveCropZoomScale(cropBox);
+    const outputSize = {
+      width: Math.max(1, Math.round(cropBox.width * scale)),
+      height: Math.max(1, Math.round(cropBox.height * scale)),
+    };
+    const enlarged = scale > 1 ? cropped.resize(outputSize) : cropped;
+    const imageSize = enlarged.getSize();
+    return {
+      imageDataUri: enlarged.toDataURL(),
+      cropBox,
+      imageSize,
+      scale,
+    };
+  }
+
+  private resolveRefinementCropBox(
+    frame: ScreenCaptureFrame,
+    result: ScreenTargetLocateResult
+  ): ScreenTargetBox | null {
+    const focusBox = result.box ?? this.boxAroundPoint(result.point, frame);
+    if (!focusBox) return null;
+
+    const centerX = focusBox.x + focusBox.width / 2;
+    const centerY = focusBox.y + focusBox.height / 2;
+    const maxFocusSide = Math.max(focusBox.width, focusBox.height);
+    const margin = clamp(maxFocusSide * 1.15, REFINE_CROP_MARGIN_MIN, REFINE_CROP_MARGIN_MAX);
+    const desiredWidth = clamp(
+      Math.max(focusBox.width + margin * 2, REFINE_CROP_MIN_SIDE),
+      REFINE_CROP_MIN_SIDE,
+      Math.min(REFINE_CROP_MAX_SIDE, frame.imageSize.width)
+    );
+    const desiredHeight = clamp(
+      Math.max(focusBox.height + margin * 2, REFINE_CROP_MIN_SIDE),
+      REFINE_CROP_MIN_SIDE,
+      Math.min(REFINE_CROP_MAX_SIDE, frame.imageSize.height)
+    );
+    const left = clamp(centerX - desiredWidth / 2, 0, frame.imageSize.width - desiredWidth);
+    const top = clamp(centerY - desiredHeight / 2, 0, frame.imageSize.height - desiredHeight);
+
+    return {
+      x: Math.round(left),
+      y: Math.round(top),
+      width: Math.max(1, Math.round(desiredWidth)),
+      height: Math.max(1, Math.round(desiredHeight)),
+    };
+  }
+
+  private boxAroundPoint(
+    point: { x: number; y: number } | undefined,
+    frame: ScreenCaptureFrame
+  ): ScreenTargetBox | undefined {
+    if (!point) return undefined;
+    const side = Math.min(REFINE_CROP_MIN_SIDE, frame.imageSize.width, frame.imageSize.height);
+    const x = clamp(point.x - side / 2, 0, frame.imageSize.width - side);
+    const y = clamp(point.y - side / 2, 0, frame.imageSize.height - side);
+    return {
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.max(1, Math.round(side)),
+      height: Math.max(1, Math.round(side)),
+    };
+  }
+
+  private createLocalFrameForCrop(crop: ScreenTargetRefinementCrop): ScreenCaptureFrame {
+    return {
+      imageDataUri: crop.imageDataUri,
+      origin: { x: 0, y: 0 },
+      screenSize: { ...crop.imageSize },
+      imageSize: { ...crop.imageSize },
+    };
+  }
+
+  private buildRefineLocatePrompt(
+    userMessage: string,
+    previous: ScreenTargetLocateResult,
+    crop: ScreenTargetRefinementCrop
+  ): string {
+    return [
+      'Algorithm 3 refinement pass: this image is a zoomed crop from the full screenshot.',
+      `User request: ${userMessage}`,
+      `Previous full-screen candidate: label="${previous.label || ''}", kind="${previous.targetKind || ''}", match="${previous.matchType || ''}", confidence=${previous.confidence}.`,
+      `Crop image size: ${crop.imageSize.width}x${crop.imageSize.height}.`,
+      `Crop maps to full screenshot image box: x=${crop.cropBox.x}, y=${crop.cropBox.y}, width=${crop.cropBox.width}, height=${crop.cropBox.height}, zoom=${crop.scale}.`,
+      'Coordinates you return must be in this crop image, after zoom, with origin at the crop top-left.',
+      'Inspect text first: exact text, partial text, button/link text, placeholder text, menu text, title text, and nearby labels.',
+      'Also inspect icons, logos, button outlines, input boxes, checkboxes, selected tabs, and visual grouping.',
+      'Return the most exact clickable/text center. If the target is text, box the text. If it is a button or input, box the whole control.',
+      'If the previous candidate is wrong but the correct target is visible inside this crop, return the correct target.',
+      'If no related target exists inside this crop, return found=false.',
+      'Output one JSON object only. No Markdown.',
+      '{"found":true,"label":"target name","targetKind":"button|text|input|icon|menu|region","matchType":"exact_text|partial_text|icon|context|best_effort","confidence":0.86,"box":{"x":80,"y":120,"width":220,"height":54},"point":{"x":190,"y":147},"reason":"why this crop confirms the target"}',
+      '{"found":false,"label":"target name","confidence":0,"reason":"target is not inside this crop"}',
+    ].join('\n');
+  }
+
+  private mapRefinedResultToParentFrame(
+    original: ScreenTargetLocateResult,
+    refinedLocal: ScreenTargetLocateResult,
+    crop: ScreenTargetRefinementCrop
+  ): ScreenTargetLocateResult {
+    const point = refinedLocal.point
+      ? {
+          x: Math.round(crop.cropBox.x + refinedLocal.point.x / crop.scale),
+          y: Math.round(crop.cropBox.y + refinedLocal.point.y / crop.scale),
+        }
+      : undefined;
+    const box = refinedLocal.box
+      ? {
+          x: Math.round(crop.cropBox.x + refinedLocal.box.x / crop.scale),
+          y: Math.round(crop.cropBox.y + refinedLocal.box.y / crop.scale),
+          width: Math.max(1, Math.round(refinedLocal.box.width / crop.scale)),
+          height: Math.max(1, Math.round(refinedLocal.box.height / crop.scale)),
+        }
+      : undefined;
+
+    return {
+      found: refinedLocal.found && !!point,
+      label: refinedLocal.label || original.label,
+      confidence: refinedLocal.confidence >= REFINE_CONFIDENCE_THRESHOLD
+        ? Math.max(refinedLocal.confidence, Math.min(original.confidence, refinedLocal.confidence + 0.1))
+        : refinedLocal.confidence,
+      point,
+      box,
+      targetKind: refinedLocal.targetKind || original.targetKind,
+      matchType: refinedLocal.matchType || original.matchType || 'crop_refined',
+      reason: refinedLocal.reason
+        ? `Algorithm3 crop refinement: ${refinedLocal.reason}`
+        : 'Algorithm3 crop refinement',
+    };
+  }
+
+  private isUsefulRefinedResult(
+    refined: ScreenTargetLocateResult,
+    original: ScreenTargetLocateResult
+  ): boolean {
+    if (!refined.found || !refined.point) return false;
+    if (!Number.isFinite(refined.confidence) || refined.confidence < REFINE_CONFIDENCE_THRESHOLD) return false;
+    if (!original.point) return true;
+    const shift = distanceBetween(refined.point, original.point);
+    if (refined.confidence >= original.confidence) return true;
+    return shift <= 80 && refined.confidence >= BEST_EFFORT_POINTABLE_CONFIDENCE;
   }
 
   private isVisionTimeoutError(error: any): boolean {
@@ -635,6 +887,22 @@ function resolveCaptureThumbnailSize(
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function resolveCropZoomScale(cropBox: ScreenTargetBox): number {
+  const maxSide = Math.max(1, cropBox.width, cropBox.height);
+  const scale = REFINE_CROP_MAX_OUTPUT_SIDE / maxSide;
+  return Math.max(1, Math.min(4, scale));
+}
+
+function distanceBetween(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function remainingBudgetMs(startedAt: number, totalBudgetMs: number): number {
+  return Math.max(0, totalBudgetMs - (Date.now() - startedAt));
 }
 
 function resolveVisionRequestTimeoutMs(config: any): number {

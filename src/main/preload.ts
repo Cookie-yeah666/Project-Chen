@@ -58,6 +58,9 @@ contextBridge.exposeInMainWorld('companion', {
   saveOperationGuideConfig: (config: any): Promise<any> => {
     return ipcRenderer.invoke('save-operation-guide-config', config);
   },
+  copyText: (text: string): Promise<any> => {
+    return ipcRenderer.invoke('clipboard-write-text', text);
+  },
   openSettings: () => {
     ipcRenderer.send('open-settings');
   },

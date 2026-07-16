@@ -95,10 +95,90 @@ function testPointerIntentCoversChineseAndEnglishTargetRequests() {
   assert.strictEqual(pointer.isPointerRequest('总结这个页面'), false);
 }
 
+function testAlgorithm3RefinementCropKeepsTargetWithContext() {
+  const analyzer = createAnalyzer();
+  const crop = analyzer.resolveRefinementCropBox(frame, {
+    found: true,
+    label: 'small text button',
+    confidence: 0.66,
+    point: { x: 560, y: 320 },
+    box: { x: 500, y: 300, width: 120, height: 40 },
+  });
+
+  assert.ok(crop);
+  assert.ok(crop.width >= 280);
+  assert.ok(crop.height >= 280);
+  assert.ok(crop.x <= 500);
+  assert.ok(crop.y <= 300);
+  assert.ok(crop.x + crop.width >= 620);
+  assert.ok(crop.y + crop.height >= 340);
+}
+
+function testAlgorithm3MapsCropCoordinatesBackToFullFrame() {
+  const analyzer = createAnalyzer();
+  const mapped = analyzer.mapRefinedResultToParentFrame(
+    {
+      found: true,
+      label: 'Download',
+      confidence: 0.64,
+      point: { x: 550, y: 320 },
+      box: { x: 500, y: 300, width: 120, height: 40 },
+      targetKind: 'button',
+    },
+    {
+      found: true,
+      label: 'Download now',
+      confidence: 0.88,
+      point: { x: 300, y: 140 },
+      box: { x: 250, y: 110, width: 180, height: 60 },
+      targetKind: 'button',
+      matchType: 'exact_text',
+      reason: 'confirmed in zoom crop',
+    },
+    {
+      imageDataUri: '',
+      cropBox: { x: 400, y: 250, width: 400, height: 280 },
+      imageSize: { width: 800, height: 560 },
+      scale: 2,
+    }
+  );
+
+  assert.strictEqual(mapped.found, true);
+  assert.strictEqual(mapped.label, 'Download now');
+  assert.strictEqual(mapped.confidence, 0.88);
+  assert.deepStrictEqual(mapped.point, { x: 550, y: 320 });
+  assert.deepStrictEqual(mapped.box, { x: 525, y: 305, width: 90, height: 30 });
+  assert.strictEqual(mapped.matchType, 'exact_text');
+}
+
+function testAlgorithm3RefinesSmallTextLikeTargets() {
+  const analyzer = createAnalyzer();
+  assert.strictEqual(analyzer.shouldRefineLocateResult({
+    found: true,
+    label: 'Settings',
+    confidence: 0.84,
+    point: { x: 100, y: 100 },
+    box: { x: 70, y: 90, width: 80, height: 24 },
+    targetKind: 'text',
+  }, frame), true);
+
+  assert.strictEqual(analyzer.shouldRefineLocateResult({
+    found: true,
+    label: 'Large panel',
+    confidence: 0.95,
+    point: { x: 500, y: 400 },
+    box: { x: 100, y: 100, width: 900, height: 600 },
+    targetKind: 'region',
+  }, frame), false);
+}
+
 testBestCandidateCanRecoverFromFoundFalse();
 testBoxArrayFallsBackToCenterPoint();
 testBoxArrayCanUseLeftTopRightBottomShape();
 testVeryWeakPointDoesNotBecomeFound();
 testPointerIntentCoversChineseAndEnglishTargetRequests();
+testAlgorithm3RefinementCropKeepsTargetWithContext();
+testAlgorithm3MapsCropCoordinatesBackToFullFrame();
+testAlgorithm3RefinesSmallTextLikeTargets();
 
 console.log('screen-target-locate-contract tests passed');

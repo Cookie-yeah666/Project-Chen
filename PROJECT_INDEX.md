@@ -59,7 +59,7 @@ src/
 - `move-controller.ts`：主进程自动移动控制器，提供 `moveTo` / `cancel` / `isMoving`，负责坐标 anchor、屏幕 clamp、平滑移动和 renderer 移动视觉事件。
 - `bubble-manager.ts`：气泡发送、状态门禁、主动气泡短间隔控制。
 - `bubble-orchestrator.ts`：主进程气泡编排边界，接收带来源/优先级的气泡请求，并把实际投递委托给 `BubbleManager`。
-- `screen-analyzer.ts`：唯一屏幕截图与 Vision 分析服务；截图帧 `ScreenCaptureFrame` 包含坐标映射元信息与 `ScreenCaptureFrame.fingerprint` 低分辨率亮度 fingerprint。目标定位优先高精度截图，提示词同时要求 OCR 文字识别和图标/控件视觉识别；精确定位不稳时会追加 best-effort 候选定位，并兼容多种 `box` / `bbox` / `candidates` JSON 格式。
+- `screen-analyzer.ts`：唯一屏幕截图与 Vision 分析服务；截图帧 `ScreenCaptureFrame` 包含坐标映射元信息与 `ScreenCaptureFrame.fingerprint` 低分辨率亮度 fingerprint。目标定位优先高精度截图，提示词同时要求 OCR 文字识别和图标/控件视觉识别；精确定位不稳时会追加 best-effort 候选定位，并兼容多种 `box` / `bbox` / `candidates` JSON 格式。算法 3 会对可用候选执行局部裁剪放大复核：从全屏候选框裁剪上下文区域，放大后让 Vision 重新读文字/图标/控件，再把局部坐标映射回全屏坐标，用于提升小文字、小图标和按钮边界精度。
 - `screen-target-pointer.ts`：屏幕目标指示编排器，仅处理 `.` 显式屏幕分析中的“指出/在哪/帮我找/点哪里/按钮/入口/where/find”等请求，负责 Vision 定位结果校验、截图坐标映射、八方向 point 指向姿态选择、指向锚点换算、移动调用、屏幕变化取消和指向气泡；中等置信候选也会移动指向并用气泡提示“最像的位置”，移动前会对 Vision 前后两帧 `ScreenCaptureFrame.fingerprint` 做一次保守 diff，diff 阈值为 `0.20`，明显变化时取消旧坐标。
 - `operation-guide-config.ts`：分步指引独立运行态配置，保存到 Electron `userData/config/operation-guide-config.json`，包含启用开关、联网搜索开关、API Key、API 地址、模型、温度和提示词。
 - `operation-guide-intent.ts`：分步指引自然语言入口解析，负责识别“我想下载 Steam，下一步怎么做”“怎么下载 Codex”“我完成了”“重新识别”等用户意图。
@@ -99,6 +99,7 @@ src/
 - **拖拽**：左键触发，mousedown 立即显示 dragged，鼠标移动时更新方向差分
 - **右键对话**：contextmenu 事件打开输入框
 - **气泡**：`position: fixed` 独立于人物，通过 getBoundingClientRect 定位
+- **分步指引面板**：固定在桌宠窗口顶部任务区，人物本体保持在下方，避免提示框遮挡角色；提示文本里的 `https://` / `www.` 网址会渲染成可点击复制按钮，通过 preload IPC 写入系统剪贴板，用户可直接去浏览器 `Ctrl+V` 访问。
 
 ### 主进程 main.ts
 - **IPC 注册**：`setupIPC()` 在 `app.whenReady` 前调用一次
@@ -117,7 +118,7 @@ src/
 - **情感前缀**：根据状态给 AI 消息加情感上下文，切换后 4 秒保持上一个状态
 - **情境化主动回应**：本地规则先判断是否应该回应，AI 仅用于高价值场景短句改写，不用于决定是否打扰；阈值、分类、模板和 AI 改写 reason 已配置化
 - **TTS 架构**：`TTSManager` 保持唯一编排入口，读取配置并调用 `createTTSEngine(config)` 获取供应商引擎；供应商引擎实现 `TTSEngine.synthesize(text)` 并返回 base64 音频，Electron 播放、字幕、停止和 `playbackId` 完成确认仍只在 `TTSManager`、preload 和 renderer 链路中处理
-- **屏幕目标指示**：`.` 屏幕分析入口中命中“指出/在哪/帮我找/点哪里/按钮/入口/where/find”等目标定位语义时，`ChatManager` 委托 `ScreenTargetPointer` 调用 Vision 结构化定位；定位提示词同时强调文字 OCR、按钮文字、输入框占位文字、图标和邻近标签。置信度足够或存在可用 best-effort 候选时，通过 `MoveController` 把桌宠移动到目标旁边，并发送 `point-visual` 八方向指向差分；低置信候选会提示“最像的位置”。point 差分约 7 秒后只恢复普通视觉，不移动回原位；指向 session 会保留前台窗口变化检测，并在 Vision 定位前后做一次基于 `ScreenCaptureFrame.fingerprint` 的低分辨率截图 fingerprint diff，阈值为 `0.20`，若屏幕明显变化则取消旧坐标；普通聊天自然语言自动触发、wheel IPC、全局输入 hook 和持续截图监控暂缓，避免隐私、误触发和复杂度问题。
+- **屏幕目标指示**：`.` 屏幕分析入口中命中“指出/在哪/帮我找/点哪里/按钮/入口/where/find”等目标定位语义时，`ChatManager` 委托 `ScreenTargetPointer` 调用 Vision 结构化定位；定位提示词同时强调文字 OCR、按钮文字、输入框占位文字、图标和邻近标签。置信度足够或存在可用 best-effort 候选时，通过 `MoveController` 把桌宠移动到目标旁边，并发送 `point-visual` 八方向指向差分；低置信候选会提示“最像的位置”。算法 3 对中小目标追加 crop-refine 复核，局部放大图的结果优先用于最终指尖坐标。point 差分约 7 秒后只恢复普通视觉，不移动回原位；指向 session 会保留前台窗口变化检测，并在 Vision 定位前后做一次基于 `ScreenCaptureFrame.fingerprint` 的低分辨率截图 fingerprint diff，阈值为 `0.20`，若屏幕明显变化则取消旧坐标；普通聊天自然语言自动触发、wheel IPC、全局输入 hook 和持续截图监控暂缓，避免隐私、误触发和复杂度问题。
 
 ## IPC 通道一览
 
@@ -136,6 +137,7 @@ src/
 | lonely-action | boolean | lonely 动画状态 |
 | state-finished | - | 动画状态结束 |
 | open-settings | - | 打开设置窗口 |
+| clipboard-write-text | text | 分步指引面板点击网址时写入系统剪贴板 |
 | renderer-log | level, message | 日志转发 |
 | voice-input-start | {source, mimeType} | 开始语音输入 session |
 | voice-input-audio-chunk | {sessionId, chunk} | 发送录音 chunk |

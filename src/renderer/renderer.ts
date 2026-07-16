@@ -99,6 +99,7 @@
   var activeTtsAudio: HTMLAudioElement | null = null;
   var interactiveHoverCount = 0;
   var mouseCaptureReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  var guideUrlCopyTimer: ReturnType<typeof setTimeout> | null = null;
 
   var voiceRecorder: MediaRecorder | null = null;
   var voiceSessionId: string | null = null;
@@ -710,7 +711,7 @@
     var current = Number(payload.currentIndex) + 1;
     var softwareName = typeof payload.softwareName === 'string' ? payload.softwareName : '分步指引';
     guideTitleEl.textContent = total > 0 ? softwareName + ' · ' + current + '/' + total : softwareName;
-    guideMessageEl.textContent = String(payload.message || payload.currentStep?.instruction || '');
+    renderGuideMessage(String(payload.message || payload.currentStep?.instruction || ''));
     guidePanelEl.classList.remove('hidden');
 
     if (guideNextBtnEl) {
@@ -722,6 +723,100 @@
     if (guideExitBtnEl) {
       guideExitBtnEl.disabled = payload.canExit !== true;
     }
+  }
+
+  function renderGuideMessage(message: string): void {
+    if (!guideMessageEl) return;
+    guideMessageEl.textContent = '';
+    var parts = splitGuideMessageByUrls(message);
+    if (parts.length === 0) {
+      guideMessageEl.textContent = message;
+      return;
+    }
+
+    parts.forEach(function (part) {
+      if (part.type === 'url') {
+        guideMessageEl!.appendChild(createGuideUrlCopyButton(part.text));
+      } else {
+        guideMessageEl!.appendChild(document.createTextNode(part.text));
+      }
+    });
+  }
+
+  function splitGuideMessageByUrls(message: string): Array<{ type: 'text' | 'url'; text: string }> {
+    var parts: Array<{ type: 'text' | 'url'; text: string }> = [];
+    var pattern = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+    var lastIndex = 0;
+    var match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(message)) !== null) {
+      var raw = match[0];
+      var trimmed = trimTrailingUrlPunctuation(raw);
+      var urlStart = match.index;
+      var urlEnd = match.index + trimmed.length;
+
+      if (!trimmed) continue;
+      if (urlStart > lastIndex) {
+        parts.push({ type: 'text', text: message.slice(lastIndex, urlStart) });
+      }
+      parts.push({ type: 'url', text: trimmed });
+      lastIndex = urlEnd;
+      pattern.lastIndex = urlEnd;
+    }
+
+    if (lastIndex < message.length) {
+      parts.push({ type: 'text', text: message.slice(lastIndex) });
+    }
+    return parts;
+  }
+
+  function trimTrailingUrlPunctuation(value: string): string {
+    return value.replace(/[),.;:!?，。；：！？、）】》]+$/g, '');
+  }
+
+  function createGuideUrlCopyButton(url: string): HTMLButtonElement {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'guide-url-copy';
+    button.textContent = url;
+    button.title = '点击复制网址';
+
+    button.addEventListener('pointerdown', function (e: PointerEvent) {
+      e.stopPropagation();
+      captureMouseForControls();
+    });
+
+    button.addEventListener('click', function (e: MouseEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      copyGuideUrlToClipboard(url, button);
+    });
+
+    return button;
+  }
+
+  async function copyGuideUrlToClipboard(url: string, button: HTMLButtonElement): Promise<void> {
+    var copied = false;
+    try {
+      var companionApi = (window as any).companion;
+      if (companionApi?.copyText) {
+        var result = await companionApi.copyText(url);
+        copied = result?.success !== false;
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        copied = true;
+      }
+    } catch (error) {
+      console.warn('[Guide] URL copy failed', error);
+    }
+
+    button.classList.toggle('guide-url-copied', copied);
+    button.title = copied ? '已复制，去浏览器 Ctrl+V 即可访问' : '复制失败，请手动复制';
+    if (guideUrlCopyTimer) clearTimeout(guideUrlCopyTimer);
+    guideUrlCopyTimer = setTimeout(function () {
+      button.classList.remove('guide-url-copied');
+      button.title = '点击复制网址';
+    }, 1600);
   }
 
   function bindGuideActionButton(button: HTMLButtonElement | null, action: () => void): void {
