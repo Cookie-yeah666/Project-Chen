@@ -9,7 +9,7 @@
     "start": "npm run build && electron .",
     "dev": "tsc && electron .",
     "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win",
+    "dist:win": "npm run build && electron-builder --win && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-start-wrapper.ps1",
     "dist:mac": "npm run build && electron-builder --mac"
   },
   "keywords": [
@@ -49,7 +49,7 @@
         }
       ],
       "icon": "src/assets/icon.ico",
-      "executableName": "start",
+      "executableName": "Project-Ze",
       "signAndEditExecutable": false
     },
     "nsis": {

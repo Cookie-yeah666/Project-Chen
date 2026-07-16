@@ -96,7 +96,7 @@ function relaunchPackagedWindowsAppAsAdmin(): boolean {
 
   try {
     const exePath = escapePowerShellSingleQuoted(process.execPath);
-    const command = `$env:${WINDOWS_AUTO_ELEVATE_SKIP_ENV}='1'; Start-Process -FilePath '${exePath}' -Verb RunAs`;
+    const command = `Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue; $env:${WINDOWS_AUTO_ELEVATE_SKIP_ENV}='1'; Start-Process -FilePath '${exePath}' -Verb RunAs`;
     const elevated = childProcess.spawn(
       'powershell.exe',
       ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command],

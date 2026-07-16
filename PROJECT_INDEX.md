@@ -106,7 +106,7 @@ src/
 - **AI 模块**：AIConfigManager → AIService → ChatManager
 - **设置窗口**：单例模式，F11 打开；“其他”页包含临时 Move 测试（Debug）区块，可输入坐标调用 `moveTo` / `teleportTo` 验证移动效果
 - **调试窗口**：F3 打开，显示日志、关系数值、互动统计、常用应用和生活习惯提示词
-- **桌宠可见性守护**：主窗口创建后启动 visibility watchdog，定期 `showInactive`、重新置顶、`moveTop`，并在窗口跑出屏幕时放回主屏幕；用于缓解打开 setup / installer 后普通置顶窗口被压下去的问题。`start.bat` 会自提权；打包后的绿色版 `start.exe` 会在 Windows 上运行期自提权。UAC 安全桌面期间无法显示，属于 Windows 限制。
+- **桌宠可见性守护**：主窗口创建后启动 visibility watchdog，定期 `showInactive`、重新置顶、`moveTop`，并在窗口跑出屏幕时放回主屏幕；用于缓解打开 setup / installer 后普通置顶窗口被压下去的问题。`start.bat` 会自提权；绿色版里 `start.exe` 是启动器，负责清理 `ELECTRON_RUN_AS_NODE` 后拉起 `Project-Ze.exe`，打包后的主程序会在 Windows 上运行期自提权。UAC 安全桌面期间无法显示，属于 Windows 限制。
 - **主动回应**：当前主动回应主路径：`ObserverManager → ContextCollector → ProactiveReactionSystem → MicroBehaviorManager → BubbleOrchestrator → BubbleManager.tryShowProactiveBubble`。基于轻量上下文快照、应用切换、工作/休息转换、长专注和直接互动生成轻柔回应；规则来自 `src/config/proactive-reactions.json` 与 `src/config/micro-behaviors.json`，Debug 面板显示最近决策/拦截原因/预算状态。`BubbleOrchestrator` 只负责主进程气泡请求的轻量编排；`BubbleManager` 继续负责状态门禁、冷却和 `show-bubble` IPC 投递。
 
 ### AI 系统

@@ -3,7 +3,8 @@
 > 旧名 Quiet Companion；当前对外项目名为 Project-Ze。
 
 ## Unreleased
-- Windows 绿色版打包：`npm run dist:win` 输出 `release/win-unpacked/start.exe`，打包期避开 `winCodeSign` 符号链接权限问题；打包后的 `start.exe` 在 Windows 上运行期自提权，降低安装器/下载器压掉桌宠窗口的概率。
+- Windows 绿色版打包：`npm run dist:win` 输出 `release/win-unpacked/start.exe` 启动入口，打包期避开 `winCodeSign` 符号链接权限问题；打包后的主程序会在 Windows 上运行期自提权，降低安装器/下载器压掉桌宠窗口的概率。
+- Windows 绿色版启动修复：`start.exe` 改为原生启动器，先清理 `ELECTRON_RUN_AS_NODE` 再拉起 `Project-Ze.exe`，避免 Electron 被环境变量误当成 Node 运行导致双击无反应。
 - 屏幕目标指示视觉：使用 `src/assets/sprites/point/` 八方向 point 差分，按目标相对方向选择姿态，并在约 7 秒后只恢复普通视觉、不移动回原位
 - 屏幕目标指示稳定性：新增 Vision 定位前后一次基于 `ScreenCaptureFrame.fingerprint` 的轻量截图 fingerprint diff，diff threshold 为 `0.20`，屏幕明显变化时在移动前取消旧坐标；不引入 wheel IPC、全局输入 hook 或持续截图监控
 - Move 自动移动修复：起点尊重当前窗口真实位置，移动期间锁定窗口尺寸并只对最终目标做 workArea clamp，避免贴近边缘时起点偏移或窗口尺寸膨胀导致视觉 Y 轴持续下沉
